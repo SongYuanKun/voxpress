@@ -99,7 +99,7 @@ export async function parseVideo(video: File) {
   const form = new FormData();
   form.append('video', video);
   const res = await request.post<unknown, ApiResponse<VideoParseResult>>('/video/parse', form, {
-    timeout: 120000,
+    timeout: 300000,
     headers: {
       'Content-Type': 'multipart/form-data'
     }

@@ -50,18 +50,22 @@ async function pathExists(filePath: string) {
 async function extractFrames(videoPath: string, workDir: string) {
   const framePattern = path.join(workDir, 'frame-%03d.jpg');
   const width = config.video.frameWidth;
-  await execFileAsync('ffmpeg', [
-    '-y',
-    '-i',
-    videoPath,
-    '-vf',
-    `fps=1/2,scale='min(${width},iw)':-2`,
-    '-frames:v',
-    String(config.video.frameCount),
-    '-q:v',
-    '3',
-    framePattern
-  ]);
+  try {
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i',
+      videoPath,
+      '-vf',
+      `fps=1/2,scale='min(${width},iw)':-2`,
+      '-frames:v',
+      String(config.video.frameCount),
+      '-q:v',
+      '3',
+      framePattern
+    ]);
+  } catch {
+    throw new AppError(1016, 422, '视频文件无法解析，请确认上传的是有效视频');
+  }
 
   const files = await fs.readdir(workDir);
   return files
