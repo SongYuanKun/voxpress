@@ -33,6 +33,13 @@ body {
   align-items: center;
 }
 
+.token-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+  align-items: center;
+}
+
 .actions.vertical {
   flex-direction: column;
 }
@@ -83,4 +90,3 @@ h3 {
     grid-template-columns: 1fr;
   }
 }
-

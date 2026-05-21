@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { Button, Cell, CellGroup, Dialog, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showToast } from 'vant';
+import { Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
 import { v4 as uuidv4 } from './utils/uuid';
 import { createRecord, deleteRecord, exportCsv, listRecords, parseText, resetRecord, updateRecord, type ExpressItem, type ExpressRecord } from './api/express';
 import ItemEditor from './components/ItemEditor.vue';
@@ -15,6 +15,7 @@ const selected = ref<ExpressRecord | null>(null);
 const loading = ref(false);
 const ttsEnabled = ref(true);
 const keyword = ref('');
+const accessToken = ref(localStorage.getItem('voxpress_token') || '');
 const { supported, listening, start, stop, speak } = useSpeech();
 
 const validItems = computed(() => parsedItems.value.filter(item => item.name.trim()));
@@ -76,8 +77,20 @@ async function saveRecord(duplicateConfirmed = false) {
 }
 
 async function refreshRecords() {
+  if (!accessToken.value) return;
   const data = await listRecords({ keyword: keyword.value || undefined });
   records.value = data.list;
+}
+
+function saveToken() {
+  const token = accessToken.value.trim();
+  if (!token) {
+    showToast('请输入访问 Token');
+    return;
+  }
+  localStorage.setItem('voxpress_token', token);
+  showToast('Token 已保存');
+  refreshRecords();
 }
 
 async function downloadCsv() {
@@ -127,7 +140,16 @@ function startSpeech() {
   if (!ok) showToast('当前浏览器不支持语音识别，请使用文字输入');
 }
 
-onMounted(refreshRecords);
+onMounted(() => {
+  if (accessToken.value) {
+    refreshRecords();
+  } else {
+    showDialog({
+      title: '需要访问 Token',
+      message: '请输入部署时配置的 APP_AUTH_TOKEN 后再使用。'
+    });
+  }
+});
 </script>
 
 <template>
@@ -136,6 +158,11 @@ onMounted(refreshRecords);
 
     <main class="content">
       <section v-if="activeTab === 'home'" class="panel">
+        <div class="token-bar">
+          <Field v-model="accessToken" type="password" placeholder="访问 Token" clearable />
+          <Button size="small" type="primary" @click="saveToken">保存</Button>
+        </div>
+
         <div class="status-line">
           <Tag type="success">文字主链路</Tag>
           <Tag :type="supported ? 'primary' : 'warning'">语音{{ supported ? '可用' : '不可用' }}</Tag>
@@ -180,6 +207,11 @@ onMounted(refreshRecords);
       </section>
 
       <section v-if="activeTab === 'list'" class="panel">
+        <div class="token-bar">
+          <Field v-model="accessToken" type="password" placeholder="访问 Token" clearable />
+          <Button size="small" type="primary" @click="saveToken">保存</Button>
+        </div>
+
         <Field v-model="keyword" placeholder="搜索单号或物品名" clearable @keyup.enter="refreshRecords">
           <template #button>
             <Button size="small" type="primary" @click="refreshRecords">搜索</Button>
