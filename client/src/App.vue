@@ -273,7 +273,14 @@ onMounted(() => {
           <p class="muted">
             P1 Spike：视频画面识别快递单号，音频识别你口述的物品内容，再生成可确认的入库清单和 Excel/CSV。
           </p>
-          <input class="video-input" type="file" accept="video/*" capture="environment" @change="onVideoSelected" />
+          <label class="video-input">
+            <span>从图库选择视频</span>
+            <input type="file" accept="video/*" @change="onVideoSelected" />
+          </label>
+          <label class="video-input">
+            <span>直接录制视频</span>
+            <input type="file" accept="video/*" capture="environment" @change="onVideoSelected" />
+          </label>
           <p v-if="videoFile" class="muted">已选择：{{ videoFile.name }}</p>
           <Button block type="primary" :disabled="!videoFile" @click="submitVideoSpike">上传并解析</Button>
         </div>
