@@ -10,6 +10,16 @@ export type ParsedItems = {
   items: ExpressItem[];
 };
 
+export type VideoParseResult = {
+  tracking_number: string;
+  tracking_confidence: number;
+  tracking_evidence: string;
+  raw_text: string;
+  items: ExpressItem[];
+  source_type: 'video';
+  warnings?: string[];
+};
+
 export type ExpressRecord = {
   id: number;
   client_request_id: string;
@@ -75,5 +85,17 @@ export async function resetRecord(id: number) {
 
 export async function deleteRecord(id: number) {
   const res = await request.delete<unknown, ApiResponse<{ id: number; status: number }>>(`/express/${id}`);
+  return res.data;
+}
+
+export async function parseVideo(video: File) {
+  const form = new FormData();
+  form.append('video', video);
+  const res = await request.post<unknown, ApiResponse<VideoParseResult>>('/video/parse', form, {
+    timeout: 120000,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  });
   return res.data;
 }

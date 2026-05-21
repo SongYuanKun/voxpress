@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
 import { v4 as uuidv4 } from './utils/uuid';
-import { createRecord, deleteRecord, exportCsv, listRecords, parseText, resetRecord, updateRecord, type ExpressItem, type ExpressRecord } from './api/express';
+import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, type ExpressItem, type ExpressRecord, type VideoParseResult } from './api/express';
 import ItemEditor from './components/ItemEditor.vue';
 import { useSpeech } from './composables/useSpeech';
 
@@ -17,6 +17,8 @@ const ttsEnabled = ref(true);
 const keyword = ref('');
 const accessToken = ref(localStorage.getItem('voxpress_token') || '');
 const videoFile = ref<File | null>(null);
+const videoResult = ref<VideoParseResult | null>(null);
+const videoLoading = ref(false);
 const { supported, listening, start, stop, speak } = useSpeech();
 
 const validItems = computed(() => parsedItems.value.filter(item => item.name.trim()));
@@ -144,13 +146,102 @@ function startSpeech() {
 function onVideoSelected(event: Event) {
   const input = event.target as HTMLInputElement;
   videoFile.value = input.files?.[0] || null;
+  videoResult.value = null;
 }
 
-function submitVideoSpike() {
-  showDialog({
-    title: '视频解析 Spike',
-    message: '当前入口已开放，但自动解析还未接入。下一步会实现：抽帧识别单号、抽音频 ASR、LLM 解析物品、人工确认后入库或导出。'
-  });
+async function submitVideo() {
+  if (!videoFile.value) return;
+  videoLoading.value = true;
+  try {
+    videoResult.value = await parseVideo(videoFile.value);
+    if (!videoResult.value.items.length) {
+      videoResult.value.items = [{ name: '', quantity: 1, unit: '' }];
+    }
+    showToast('视频解析完成');
+    notify('视频解析完成，请确认结果');
+  } finally {
+    videoLoading.value = false;
+  }
+}
+
+async function parseVideoRawText() {
+  if (!videoResult.value?.raw_text.trim()) {
+    showToast('请先补充口述内容');
+    return;
+  }
+  videoLoading.value = true;
+  try {
+    const parsed = await parseText(videoResult.value.raw_text);
+    videoResult.value.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
+    showToast('物品解析完成');
+  } finally {
+    videoLoading.value = false;
+  }
+}
+
+function csvCell(value: unknown) {
+  let text = String(value ?? '');
+  if (/^[=+\-@]/.test(text)) {
+    text = `'${text}`;
+  }
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadVideoCsv() {
+  if (!videoResult.value) return;
+  const rows = [
+    ['快递单号', '口述内容', '物品名', '数量', '单位'],
+    ...videoResult.value.items.map(item => [
+      videoResult.value?.tracking_number || '',
+      videoResult.value?.raw_text || '',
+      item.name,
+      item.quantity,
+      item.unit
+    ])
+  ];
+  const csv = '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `voxpress-video-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function saveVideoRecord(duplicateConfirmed = false) {
+  if (!videoResult.value) return;
+  const items = videoResult.value.items.filter(item => item.name.trim());
+  if (!videoResult.value.tracking_number || !items.length) {
+    showToast('请先补全单号和物品清单');
+    return;
+  }
+
+  videoLoading.value = true;
+  try {
+    await createRecord({
+      client_request_id: uuidv4(),
+      tracking_number: videoResult.value.tracking_number,
+      raw_text: videoResult.value.raw_text,
+      items,
+      duplicate_confirmed: duplicateConfirmed
+    });
+    showToast('视频入库成功');
+    notify('视频入库成功');
+    await refreshRecords();
+  } catch (error: any) {
+    if (error?.code === 1008) {
+      await showConfirmDialog({
+        title: '重复单号',
+        message: '该单号已有记录，是否仍然保存为新记录？'
+      });
+      await saveVideoRecord(true);
+    }
+  } finally {
+    videoLoading.value = false;
+  }
 }
 
 onMounted(() => {
@@ -270,9 +361,7 @@ onMounted(() => {
 
         <div class="video-card">
           <h3>上传视频解析 Excel</h3>
-          <p class="muted">
-            P1 Spike：视频画面识别快递单号，音频识别你口述的物品内容，再生成可确认的入库清单和 Excel/CSV。
-          </p>
+          <p class="muted">上传或录制一段视频：画面拍清快递面单，语音说清里面有什么。</p>
           <label class="video-input">
             <span>从图库选择视频</span>
             <input type="file" accept="video/*" @change="onVideoSelected" />
@@ -282,12 +371,36 @@ onMounted(() => {
             <input type="file" accept="video/*" capture="environment" @change="onVideoSelected" />
           </label>
           <p v-if="videoFile" class="muted">已选择：{{ videoFile.name }}</p>
-          <Button block type="primary" :disabled="!videoFile" @click="submitVideoSpike">上传并解析</Button>
+          <Button block type="primary" :disabled="!videoFile" :loading="videoLoading" @click="submitVideo">上传并解析</Button>
+        </div>
+
+        <div v-if="videoResult" class="video-card">
+          <h3>解析结果</h3>
+          <Field v-model="videoResult.tracking_number" label="快递单号" placeholder="未识别时可手动补充" clearable />
+          <p class="muted">
+            置信度：{{ Math.round(videoResult.tracking_confidence * 100) }}%
+            <span v-if="videoResult.tracking_evidence">；{{ videoResult.tracking_evidence }}</span>
+          </p>
+          <p v-for="warning in videoResult.warnings" :key="warning" class="warning-text">{{ warning }}</p>
+          <Field
+            v-model="videoResult.raw_text"
+            label="口述内容"
+            type="textarea"
+            rows="3"
+            autosize
+            placeholder="如果音频识别失败，可在这里手动补充口述内容"
+          />
+          <Button block plain type="primary" :loading="videoLoading" @click="parseVideoRawText">解析口述内容</Button>
+          <ItemEditor v-model="videoResult.items" />
+          <div class="actions vertical">
+            <Button block type="success" :loading="videoLoading" @click="saveVideoRecord(false)">确认入库</Button>
+            <Button block plain type="primary" @click="downloadVideoCsv">下载当前结果 CSV</Button>
+          </div>
         </div>
 
         <CellGroup inset>
-          <Cell title="画面" label="抽帧识别条码/二维码；失败时 OCR 面单文本" />
-          <Cell title="音频" label="抽音频后 ASR 识别口述内容" />
+          <Cell title="画面" label="抽帧识别快递单号；失败时可手动修正" />
+          <Cell title="音频" label="抽音频后 ASR 识别口述内容，再结构化物品" />
           <Cell title="结果" label="人工确认后入库或导出 Excel/CSV" />
         </CellGroup>
       </section>

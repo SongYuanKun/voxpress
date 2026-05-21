@@ -10,6 +10,15 @@ Core MVP flow:
 4. Confirm and save into SQLite.
 5. Search, edit, reset, or soft-delete records.
 
+Video flow:
+
+1. Upload a gallery video or record a new video in the browser.
+2. Server extracts frames with FFmpeg.
+3. Server recognizes tracking numbers locally with zbar + Tesseract OCR.
+4. Server extracts audio and calls the configured ASR provider.
+5. DeepSeek parses the transcript into `name + quantity + unit`.
+6. User confirms the result, saves it, or downloads the current result as CSV.
+
 ## Quick Start
 
 ```bash
@@ -45,7 +54,7 @@ Deployment follows the existing `au / au_message` style:
 LLM_PROVIDER=deepseek
 LLM_API_BASE=https://api.deepseek.com/v1
 LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
-LLM_MODEL=deepseek-chat
+LLM_MODEL=deepseek-v4-flash
 LLM_TIMEOUT_MS=15000
 LLM_MAX_RETRIES=1
 LLM_MAX_INPUT_CHARS=1000
@@ -55,3 +64,22 @@ LLM_MAX_OUTPUT_TOKENS=800
 
 LLM keys are server-only. The frontend never calls the LLM provider directly.
 
+For the current deployment, `deepseek-v4-flash` is the recommended default for text structuring. `deepseek-v4-pro` is not needed unless later prompts become complex enough to justify the higher cost.
+
+## Video / ASR Config
+
+```env
+UPLOAD_DIR=/app/data/uploads
+VIDEO_MAX_UPLOAD_MB=80
+VIDEO_FRAME_COUNT=4
+VIDEO_FRAME_WIDTH=1280
+
+ASR_PROVIDER=openai-compatible
+ASR_API_BASE=https://api.openai.com/v1
+ASR_API_KEY=sk-xxxxxxxxxxxxxxxx
+ASR_MODEL=whisper-1
+ASR_TIMEOUT_MS=60000
+ASR_MAX_RETRIES=1
+```
+
+DeepSeek v4-flash/pro currently works for text structuring in this app, but the tested API rejects image input and does not provide a compatible audio transcription endpoint. VoxPress therefore keeps tracking-number recognition local and keeps ASR as a separate OpenAI-compatible provider.

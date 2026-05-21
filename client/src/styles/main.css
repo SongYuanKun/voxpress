@@ -74,6 +74,13 @@ body {
   line-height: 1.6;
 }
 
+.warning-text {
+  margin: 0;
+  color: #b45309;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .empty {
   padding: 48px 0;
   text-align: center;
