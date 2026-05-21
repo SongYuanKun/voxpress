@@ -1,0 +1,28 @@
+services:
+  voxpress:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: voxpress:local
+    container_name: voxpress-local
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=3000
+      - DB_PATH=/app/data/express.db
+      - CORS_ORIGIN=*
+    ports:
+      - "8086:3000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+

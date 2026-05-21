@@ -1,0 +1,32 @@
+services:
+  voxpress:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: voxpress:latest
+    container_name: voxpress
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=3000
+      - DB_PATH=/app/data/express.db
+    ports:
+      - "8086:3000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
