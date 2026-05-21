@@ -16,6 +16,7 @@ const loading = ref(false);
 const ttsEnabled = ref(true);
 const keyword = ref('');
 const accessToken = ref(localStorage.getItem('voxpress_token') || '');
+const videoFile = ref<File | null>(null);
 const { supported, listening, start, stop, speak } = useSpeech();
 
 const validItems = computed(() => parsedItems.value.filter(item => item.name.trim()));
@@ -140,6 +141,18 @@ function startSpeech() {
   if (!ok) showToast('当前浏览器不支持语音识别，请使用文字输入');
 }
 
+function onVideoSelected(event: Event) {
+  const input = event.target as HTMLInputElement;
+  videoFile.value = input.files?.[0] || null;
+}
+
+function submitVideoSpike() {
+  showDialog({
+    title: '视频解析 Spike',
+    message: '当前入口已开放，但自动解析还未接入。下一步会实现：抽帧识别单号、抽音频 ASR、LLM 解析物品、人工确认后入库或导出。'
+  });
+}
+
 onMounted(() => {
   if (accessToken.value) {
     refreshRecords();
@@ -248,11 +261,35 @@ onMounted(() => {
         </template>
         <div v-else class="empty">请选择一条记录</div>
       </section>
+
+      <section v-if="activeTab === 'video'" class="panel">
+        <div class="token-bar">
+          <Field v-model="accessToken" type="password" placeholder="访问 Token" clearable />
+          <Button size="small" type="primary" @click="saveToken">保存</Button>
+        </div>
+
+        <div class="video-card">
+          <h3>上传视频解析 Excel</h3>
+          <p class="muted">
+            P1 Spike：视频画面识别快递单号，音频识别你口述的物品内容，再生成可确认的入库清单和 Excel/CSV。
+          </p>
+          <input class="video-input" type="file" accept="video/*" capture="environment" @change="onVideoSelected" />
+          <p v-if="videoFile" class="muted">已选择：{{ videoFile.name }}</p>
+          <Button block type="primary" :disabled="!videoFile" @click="submitVideoSpike">上传并解析</Button>
+        </div>
+
+        <CellGroup inset>
+          <Cell title="画面" label="抽帧识别条码/二维码；失败时 OCR 面单文本" />
+          <Cell title="音频" label="抽音频后 ASR 识别口述内容" />
+          <Cell title="结果" label="人工确认后入库或导出 Excel/CSV" />
+        </CellGroup>
+      </section>
     </main>
 
     <Tabbar v-model="activeTab">
       <TabbarItem name="home">入库</TabbarItem>
       <TabbarItem name="list">记录</TabbarItem>
+      <TabbarItem name="video">视频</TabbarItem>
       <TabbarItem name="detail">详情</TabbarItem>
     </Tabbar>
   </div>

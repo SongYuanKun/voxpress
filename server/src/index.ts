@@ -10,6 +10,7 @@ import { db } from './db/index.js';
 import { authMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { expressRouter } from './routes/express.js';
+import { videoRouter } from './routes/video.js';
 import { logger } from './utils/logger.js';
 
 const app = express();
@@ -44,6 +45,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/express', authMiddleware, expressRouter);
+app.use('/api/video', authMiddleware, videoRouter);
 app.use(express.static(clientDist));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));

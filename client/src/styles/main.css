@@ -80,6 +80,23 @@ body {
   color: #6b7280;
 }
 
+.video-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.video-input {
+  width: 100%;
+  padding: 10px;
+  border: 1px dashed #9ca3af;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
 h3 {
   margin: 12px 0 4px;
   font-size: 16px;
