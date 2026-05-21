@@ -96,6 +96,27 @@ body {
   background: #fff;
 }
 
+.video-record-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.video-record-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.video-record-title h3 {
+  margin: 0;
+}
+
 .video-input {
   display: flex;
   flex-direction: column;

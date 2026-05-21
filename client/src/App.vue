@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
 import { v4 as uuidv4 } from './utils/uuid';
-import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, type ExpressItem, type ExpressRecord, type VideoParseResult } from './api/express';
+import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, type ExpressItem, type ExpressRecord, type VideoParsedRecord, type VideoParseResult } from './api/express';
 import ItemEditor from './components/ItemEditor.vue';
 import { useSpeech } from './composables/useSpeech';
 
@@ -154,8 +154,13 @@ async function submitVideo() {
   videoLoading.value = true;
   try {
     videoResult.value = await parseVideo(videoFile.value);
-    if (!videoResult.value.items.length) {
-      videoResult.value.items = [{ name: '', quantity: 1, unit: '' }];
+    if (!videoResult.value.records.length) {
+      videoResult.value.records = [{ tracking_number: '', tracking_confidence: 0, tracking_evidence: '', raw_text: videoResult.value.raw_text || '', items: [{ name: '', quantity: 1, unit: '' }] }];
+    }
+    for (const record of videoResult.value.records) {
+      if (!record.items.length) {
+        record.items = [{ name: '', quantity: 1, unit: '' }];
+      }
     }
     showToast('视频解析完成');
     notify('视频解析完成，请确认结果');
@@ -171,12 +176,29 @@ async function parseVideoRawText() {
   }
   videoLoading.value = true;
   try {
-    const parsed = await parseText(videoResult.value.raw_text);
-    videoResult.value.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
+    if (videoResult.value.records.length === 1) {
+      await parseVideoRecordRawText(videoResult.value.records[0]);
+    } else {
+      for (const record of videoResult.value.records) {
+        if (record.raw_text.trim()) {
+          const parsed = await parseText(record.raw_text);
+          record.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
+        }
+      }
+    }
     showToast('物品解析完成');
   } finally {
     videoLoading.value = false;
   }
+}
+
+async function parseVideoRecordRawText(record: VideoParsedRecord) {
+  if (!record.raw_text.trim()) {
+    showToast('请先补充该单口述内容');
+    return;
+  }
+  const parsed = await parseText(record.raw_text);
+  record.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
 }
 
 function csvCell(value: unknown) {
@@ -191,13 +213,15 @@ function downloadVideoCsv() {
   if (!videoResult.value) return;
   const rows = [
     ['快递单号', '口述内容', '物品名', '数量', '单位'],
-    ...videoResult.value.items.map(item => [
-      videoResult.value?.tracking_number || '',
-      videoResult.value?.raw_text || '',
-      item.name,
-      item.quantity,
-      item.unit
-    ])
+    ...videoResult.value.records.flatMap(record =>
+      record.items.map(item => [
+        record.tracking_number,
+        record.raw_text,
+        item.name,
+        item.quantity,
+        item.unit
+      ])
+    )
   ];
   const csv = '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -211,10 +235,9 @@ function downloadVideoCsv() {
   URL.revokeObjectURL(url);
 }
 
-async function saveVideoRecord(duplicateConfirmed = false) {
-  if (!videoResult.value) return;
-  const items = videoResult.value.items.filter(item => item.name.trim());
-  if (!videoResult.value.tracking_number || !items.length) {
+async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = false) {
+  const items = record.items.filter(item => item.name.trim());
+  if (!record.tracking_number || !items.length) {
     showToast('请先补全单号和物品清单');
     return;
   }
@@ -223,8 +246,8 @@ async function saveVideoRecord(duplicateConfirmed = false) {
   try {
     await createRecord({
       client_request_id: uuidv4(),
-      tracking_number: videoResult.value.tracking_number,
-      raw_text: videoResult.value.raw_text,
+      tracking_number: record.tracking_number,
+      raw_text: record.raw_text || videoResult.value?.raw_text || '',
       items,
       duplicate_confirmed: duplicateConfirmed
     });
@@ -237,11 +260,25 @@ async function saveVideoRecord(duplicateConfirmed = false) {
         title: '重复单号',
         message: '该单号已有记录，是否仍然保存为新记录？'
       });
-      await saveVideoRecord(true);
+      await saveVideoRecord(record, true);
     }
   } finally {
     videoLoading.value = false;
   }
+}
+
+async function saveAllVideoRecords() {
+  if (!videoResult.value) return;
+  const validRecords = videoResult.value.records.filter(record => record.tracking_number && record.items.some(item => item.name.trim()));
+  if (!validRecords.length) {
+    showToast('没有可入库的记录');
+    return;
+  }
+
+  for (const record of validRecords) {
+    await saveVideoRecord(record, false);
+  }
+  showToast('批量入库完成');
 }
 
 onMounted(() => {
@@ -376,32 +413,55 @@ onMounted(() => {
 
         <div v-if="videoResult" class="video-card">
           <h3>解析结果</h3>
-          <Field v-model="videoResult.tracking_number" label="快递单号" placeholder="未识别时可手动补充" clearable />
-          <p class="muted">
-            置信度：{{ Math.round(videoResult.tracking_confidence * 100) }}%
-            <span v-if="videoResult.tracking_evidence">；{{ videoResult.tracking_evidence }}</span>
-          </p>
+          <Tag type="primary">识别到 {{ videoResult.records.length }} 条待确认记录</Tag>
+          <p v-if="videoResult.tracking_numbers.length" class="muted">候选单号：{{ videoResult.tracking_numbers.join('，') }}</p>
+          <p v-if="videoResult.tracking_evidence" class="muted">OCR：{{ videoResult.tracking_evidence }}</p>
           <p v-for="warning in videoResult.warnings" :key="warning" class="warning-text">{{ warning }}</p>
           <Field
             v-model="videoResult.raw_text"
-            label="口述内容"
+            label="完整口述"
             type="textarea"
             rows="3"
             autosize
-            placeholder="如果音频识别失败，可在这里手动补充口述内容"
+            placeholder="如果音频识别失败，可在这里粘贴完整口述；多单建议在下方逐条拆分"
           />
-          <Button block plain type="primary" :loading="videoLoading" @click="parseVideoRawText">解析口述内容</Button>
-          <ItemEditor v-model="videoResult.items" />
+          <Button block plain type="primary" :loading="videoLoading" @click="parseVideoRawText">按记录重新解析口述内容</Button>
+
+          <div v-for="(record, index) in videoResult.records" :key="index" class="video-record-card">
+            <div class="video-record-title">
+              <h3>第 {{ index + 1 }} 单</h3>
+              <Tag :type="record.tracking_number ? 'success' : 'warning'">
+                {{ record.tracking_number ? '已识别单号' : '待补单号' }}
+              </Tag>
+            </div>
+            <Field v-model="record.tracking_number" label="快递单号" placeholder="未识别时可手动补充" clearable />
+            <p class="muted">
+              置信度：{{ Math.round(record.tracking_confidence * 100) }}%
+              <span v-if="record.tracking_evidence">；{{ record.tracking_evidence }}</span>
+            </p>
+            <Field
+              v-model="record.raw_text"
+              label="本单口述"
+              type="textarea"
+              rows="2"
+              autosize
+              placeholder="例如：这个单号里面是 5 张相纸，2 个手机壳"
+            />
+            <Button size="small" plain type="primary" :loading="videoLoading" @click="parseVideoRecordRawText(record)">解析本单口述</Button>
+            <ItemEditor v-model="record.items" />
+            <Button block type="success" :loading="videoLoading" @click="saveVideoRecord(record, false)">保存这一单</Button>
+          </div>
+
           <div class="actions vertical">
-            <Button block type="success" :loading="videoLoading" @click="saveVideoRecord(false)">确认入库</Button>
-            <Button block plain type="primary" @click="downloadVideoCsv">下载当前结果 CSV</Button>
+            <Button block type="success" :loading="videoLoading" @click="saveAllVideoRecords">批量确认入库</Button>
+            <Button block plain type="primary" @click="downloadVideoCsv">下载全部结果 CSV</Button>
           </div>
         </div>
 
         <CellGroup inset>
           <Cell title="画面" label="抽帧识别快递单号；失败时可手动修正" />
           <Cell title="音频" label="抽音频后 ASR 识别口述内容，再结构化物品" />
-          <Cell title="结果" label="人工确认后入库或导出 Excel/CSV" />
+          <Cell title="结果" label="多条记录逐条确认后入库或导出 Excel/CSV" />
         </CellGroup>
       </section>
     </main>

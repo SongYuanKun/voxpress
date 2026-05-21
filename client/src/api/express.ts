@@ -10,12 +10,19 @@ export type ParsedItems = {
   items: ExpressItem[];
 };
 
-export type VideoParseResult = {
+export type VideoParsedRecord = {
   tracking_number: string;
   tracking_confidence: number;
   tracking_evidence: string;
   raw_text: string;
   items: ExpressItem[];
+};
+
+export type VideoParseResult = {
+  tracking_numbers: string[];
+  tracking_evidence: string;
+  raw_text: string;
+  records: VideoParsedRecord[];
   source_type: 'video';
   warnings?: string[];
 };

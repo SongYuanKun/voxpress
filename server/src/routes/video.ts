@@ -8,7 +8,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { config } from '../config/index.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
-import { parseItems, transcribeAudio, type TrackingRecognition } from '../services/llmService.js';
+import { parseVideoRecords, transcribeAudio, type VideoParsedRecord } from '../services/llmService.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -93,21 +93,33 @@ async function extractAudio(videoPath: string, workDir: string) {
   return (await pathExists(audioPath)) ? audioPath : null;
 }
 
-function pickTrackingNumber(text: string) {
+type TrackingCandidate = {
+  tracking_number: string;
+  confidence: number;
+  evidence: string;
+};
+
+function pickTrackingNumbers(text: string) {
   const normalized = text.toUpperCase().replace(/[O]/g, '0').replace(/[IL]/g, '1');
   const candidates = normalized.match(/[A-Z0-9]{8,32}/g) || [];
-  const scored = candidates
+  const seen = new Set<string>();
+  return candidates
     .map((value) => ({
       value,
       score: (/[0-9]/.test(value) ? 2 : 0) + Math.min(value.length, 20) + (/[A-Z]/.test(value) ? 1 : 0)
     }))
     .filter((item) => /\d{6,}/.test(item.value))
-    .sort((a, b) => b.score - a.score);
-
-  return scored[0]?.value || '';
+    .sort((a, b) => b.score - a.score)
+    .filter((item) => {
+      if (seen.has(item.value)) return false;
+      seen.add(item.value);
+      return true;
+    })
+    .slice(0, 50)
+    .map((item) => item.value);
 }
 
-async function recognizeTrackingLocally(framePaths: string[]): Promise<TrackingRecognition> {
+async function recognizeTrackingLocally(framePaths: string[]): Promise<{ candidates: TrackingCandidate[]; evidence: string }> {
   const snippets: string[] = [];
 
   for (const frame of framePaths) {
@@ -127,12 +139,58 @@ async function recognizeTrackingLocally(framePaths: string[]): Promise<TrackingR
   }
 
   const evidence = snippets.join('\n').slice(0, 300);
-  const trackingNumber = pickTrackingNumber(evidence);
+  const trackingNumbers = pickTrackingNumbers(evidence);
   return {
-    tracking_number: trackingNumber,
-    confidence: trackingNumber ? 0.72 : 0,
-    evidence: evidence.replace(/\s+/g, ' ').slice(0, 160)
+    candidates: trackingNumbers.map((trackingNumber) => ({
+      tracking_number: trackingNumber,
+      confidence: 0.72,
+      evidence: evidence.replace(/\s+/g, ' ').slice(0, 160)
+    })),
+    evidence: evidence.replace(/\s+/g, ' ').slice(0, 300)
   };
+}
+
+function recordsFromCandidates(candidates: TrackingCandidate[]): VideoParsedRecord[] {
+  return candidates.map((candidate) => ({
+    tracking_number: candidate.tracking_number,
+    raw_text: '',
+    items: []
+  }));
+}
+
+function mergeRecordsWithCandidates(records: VideoParsedRecord[], candidates: TrackingCandidate[]) {
+  const used = new Set<string>();
+  const candidateValues = candidates.map((candidate) => candidate.tracking_number);
+
+  const merged = records.map((record, index) => {
+    let trackingNumber = record.tracking_number;
+    if (!trackingNumber && candidateValues[index]) {
+      trackingNumber = candidateValues[index];
+    }
+    if (trackingNumber) used.add(trackingNumber);
+    const candidate = candidates.find((item) => item.tracking_number === trackingNumber) || candidates[index];
+    return {
+      tracking_number: trackingNumber,
+      tracking_confidence: candidate?.confidence || 0,
+      tracking_evidence: candidate?.evidence || '',
+      raw_text: record.raw_text,
+      items: record.items
+    };
+  });
+
+  for (const candidate of candidates) {
+    if (!used.has(candidate.tracking_number)) {
+      merged.push({
+        tracking_number: candidate.tracking_number,
+        tracking_confidence: candidate.confidence,
+        tracking_evidence: candidate.evidence,
+        raw_text: '',
+        items: []
+      });
+    }
+  }
+
+  return merged;
 }
 
 async function cleanup(paths: string[]) {
@@ -166,16 +224,19 @@ videoRouter.post('/parse', upload.single('video'), asyncHandler(async (req, res)
       warnings.push('未检测到可用音轨');
     }
 
-    const parsed = transcript.trim() ? await parseItems(transcript) : { items: [] };
+    const trackingNumbers = tracking.candidates.map((candidate) => candidate.tracking_number);
+    const parsedRecords = transcript.trim()
+      ? await parseVideoRecords(transcript, trackingNumbers)
+      : recordsFromCandidates(tracking.candidates);
+    const records = mergeRecordsWithCandidates(parsedRecords, tracking.candidates);
 
     res.json({
       code: 0,
       data: {
-        tracking_number: tracking.tracking_number,
-        tracking_confidence: tracking.confidence,
+        tracking_numbers: trackingNumbers,
         tracking_evidence: tracking.evidence,
         raw_text: transcript,
-        items: parsed.items,
+        records,
         source_type: 'video',
         warnings
       },

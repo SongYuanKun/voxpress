@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import fs from 'node:fs';
+import { z } from 'zod';
 import { config } from '../config/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { parsedItemsSchema, type ParsedItems } from '../schemas/express.js';
@@ -81,6 +82,67 @@ export async function parseItems(rawText: string): Promise<ParsedItems> {
 }
 
 export const llmPrompt = systemPrompt;
+
+const videoRecordsPrompt = `你是快递视频口述内容拆分助手。
+用户会提供一段从视频音频转写来的中文口述，以及画面 OCR 识别出的候选快递单号。
+你的任务是把口述内容拆成多条快递入库记录。
+
+规则：
+1. 只输出合法 JSON，不要输出解释文本。
+2. 输出格式必须是 {"records":[{"tracking_number":"单号或空字符串","raw_text":"该单的原始口述片段","items":[{"name":"物品名","quantity":数量,"unit":"单位"}]}]}。
+3. 如果口述里出现“第一个、第二个、下一个、这个单号、尾号、单号”等线索，尽量按顺序或线索匹配候选单号。
+4. 如果无法判断归属，就按口述顺序拆分；单号可留空，前端会人工确认。
+5. 每条记录的 items 按 name + quantity + unit 输出；未明确数量时默认为 1。
+6. 不要编造候选单号之外的新单号；除非口述中明确说出了完整单号。
+7. 无法识别任何物品时输出 {"records":[]}。`;
+
+const videoParsedRecordSchema = z.object({
+  tracking_number: z.string().trim().max(80).default(''),
+  raw_text: z.string().trim().max(1000).default(''),
+  items: parsedItemsSchema.shape.items
+});
+
+const videoParsedRecordsSchema = z.object({
+  records: z.array(videoParsedRecordSchema).max(50).default([])
+});
+
+export type VideoParsedRecord = z.infer<typeof videoParsedRecordSchema>;
+
+export async function parseVideoRecords(rawText: string, trackingCandidates: string[]): Promise<VideoParsedRecord[]> {
+  const input = rawText.slice(0, config.llm.maxInputChars * 3);
+  const client = buildClient();
+  let responseText = '';
+
+  try {
+    const response = await client.chat.completions.create({
+      model: config.llm.model,
+      temperature: config.llm.temperature,
+      max_tokens: Math.max(config.llm.maxOutputTokens, 1200),
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: videoRecordsPrompt },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            tracking_candidates: trackingCandidates.slice(0, 50),
+            transcript: input
+          })
+        }
+      ]
+    });
+
+    responseText = response.choices[0]?.message?.content || '';
+  } catch {
+    throw new AppError(1004, 504, 'LLM 批量拆分调用超时或失败', { provider: config.llm.provider });
+  }
+
+  try {
+    const parsed = JSON.parse(extractJson(responseText));
+    return videoParsedRecordsSchema.parse(parsed).records;
+  } catch {
+    throw new AppError(1003, 422, 'LLM 批量拆分输出非法或无法解析');
+  }
+}
 
 const trackingPrompt = `你是快递面单识别助手。
 任务：从视频抽帧图片中识别快递单号/运单号。
