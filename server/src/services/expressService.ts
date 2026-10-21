@@ -3,6 +3,7 @@ import { db } from '../db/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 import type { ParsedItem, ParsedItems } from '../schemas/express.js';
 import { parseItems } from './llmService.js';
+import { businessDateSql } from './businessDate.js';
 
 type RecordRow = {
   id: number;
@@ -133,12 +134,12 @@ export function listRecords(query: {
   const params: unknown[] = [];
 
   if (query.date_from) {
-    where.push('date(r.created_at) >= date(?)');
+    where.push(`${businessDateSql('r.created_at')} >= date(?)`);
     params.push(query.date_from);
   }
 
   if (query.date_to) {
-    where.push('date(r.created_at) <= date(?)');
+    where.push(`${businessDateSql('r.created_at')} <= date(?)`);
     params.push(query.date_to);
   }
 
@@ -172,12 +173,12 @@ export function listRecordsForExport(query: {
   const params: unknown[] = [];
 
   if (query.date_from) {
-    where.push('date(r.created_at) >= date(?)');
+    where.push(`${businessDateSql('r.created_at')} >= date(?)`);
     params.push(query.date_from);
   }
 
   if (query.date_to) {
-    where.push('date(r.created_at) <= date(?)');
+    where.push(`${businessDateSql('r.created_at')} <= date(?)`);
     params.push(query.date_to);
   }
 

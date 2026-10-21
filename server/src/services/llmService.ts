@@ -52,6 +52,11 @@ function extractJson(content: string) {
   return match?.[0] || trimmed;
 }
 
+function providerError(error: unknown, code: number, message: string, data: unknown) {
+  if (error instanceof AppError) return error;
+  return new AppError(code, 504, message, data);
+}
+
 export async function parseItems(rawText: string): Promise<ParsedItems> {
   const input = rawText.slice(0, config.llm.maxInputChars);
   const client = buildClient();
@@ -72,7 +77,7 @@ export async function parseItems(rawText: string): Promise<ParsedItems> {
 
     responseText = response.choices[0]?.message?.content || '';
   } catch (error) {
-    throw new AppError(1004, 504, 'LLM 调用超时或失败', { provider: config.llm.provider });
+    throw providerError(error, 1004, 'LLM 调用超时或失败', { provider: config.llm.provider });
   }
 
   try {
@@ -134,8 +139,8 @@ export async function parseVideoRecords(rawText: string, trackingCandidates: str
     }));
 
     responseText = response.choices[0]?.message?.content || '';
-  } catch {
-    throw new AppError(1004, 504, 'LLM 批量拆分调用超时或失败', { provider: config.llm.provider });
+  } catch (error) {
+    throw providerError(error, 1004, 'LLM 批量拆分调用超时或失败', { provider: config.llm.provider });
   }
 
   try {
@@ -196,8 +201,8 @@ export async function recognizeTrackingFromFrames(framePaths: string[]): Promise
       ]
     }));
     responseText = response.choices[0]?.message?.content || '';
-  } catch {
-    throw new AppError(1012, 504, '视频画面识别失败，请确认 LLM 模型支持图片输入');
+  } catch (error) {
+    throw providerError(error, 1012, '视频画面识别失败，请确认 LLM 模型支持图片输入', { provider: config.llm.provider });
   }
 
   try {
@@ -222,7 +227,7 @@ export async function transcribeAudio(audioPath: string): Promise<string> {
       language: 'zh'
     }));
     return (result.text || '').trim();
-  } catch {
-    throw new AppError(1014, 504, '音频转文字失败，请确认 ASR_API_BASE/ASR_MODEL 支持 audio transcriptions');
+  } catch (error) {
+    throw providerError(error, 1014, '音频转文字失败，请确认 ASR_API_BASE/ASR_MODEL 支持 audio transcriptions', { provider: config.asr.provider });
   }
 }

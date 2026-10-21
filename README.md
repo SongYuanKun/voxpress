@@ -48,10 +48,10 @@ Deployment follows the existing `au / au_message` style:
 - `/api/health` is used for healthcheck
 - 1Panel/OpenResty should terminate HTTPS and reverse proxy to `127.0.0.1:8086`
 
-The Compose port binds only to loopback. When enabling `REVERSE_PROXY=true`, set
-`TRUST_PROXY` to the OpenResty source IP or CIDR. The server refuses to start in
-reverse-proxy mode without that explicit value, so rate limiting uses the actual
-client IP rather than one shared proxy address.
+The production Compose port binds only to loopback and always enables reverse-proxy
+mode. Set `TRUST_PROXY` to the OpenResty source IP or CIDR before it can start.
+`docker-compose.local.yml` keeps direct mode disabled. This makes rate limiting use
+the actual client IP rather than one shared proxy address.
 
 ## LLM Config
 
@@ -91,4 +91,10 @@ DeepSeek v4-flash/pro currently works for text structuring in this app, but the 
 
 ## Backup
 
-Backups are manual only; no application cron is created. Run `npm --prefix server run backup` when needed. It uses SQLite's backup API, writes under `BACKUP_DIR`, records the result in `backup_logs`, and retains seven days by default.
+Backups are manual only; no application cron is created. Build the server first,
+then run `npm --prefix server run backup`. The production image includes the same
+compiled `dist/scripts/backup.js` command, and its `/app/backups` directory is the
+mounted `./backups` path. The command uses SQLite's backup API, records the result
+in `backup_logs`, and retains seven days by default.
+
+Dates in list filtering and CSV export use the warehouse business day, UTC+08:00.

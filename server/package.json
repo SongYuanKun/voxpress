@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "backup": "tsx src/scripts/backup.ts"
+    "backup": "node dist/scripts/backup.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

@@ -179,8 +179,10 @@ videoRouter.post('/parse', upload.single('video'), asyncHandler(async (req, res)
     if (audioPath) {
       try {
         transcript = await transcribeAudio(audioPath);
-      } catch {
-        warnings.push('音频转文字失败：请配置支持 audio transcriptions 的 ASR_API_BASE/ASR_MODEL，或先手动补充口述内容');
+      } catch (error) {
+        warnings.push(error instanceof AppError && error.code === 1017
+          ? '今日 LLM/ASR 调用额度已用尽；已保留画面候选，请手动补充口述内容'
+          : '音频转文字失败：请配置支持 audio transcriptions 的 ASR_API_BASE/ASR_MODEL，或先手动补充口述内容');
       }
     } else {
       warnings.push('未检测到可用音轨');
@@ -191,10 +193,12 @@ videoRouter.post('/parse', upload.single('video'), asyncHandler(async (req, res)
     if (transcript.trim()) {
       try {
         parsedRecords = await parseVideoRecords(transcript, trackingNumbers);
-      } catch {
+      } catch (error) {
         // The transcript and local OCR result remain useful for manual
         // confirmation even when the optional LLM grouping call times out.
-        warnings.push('口述内容未能自动拆分；已保留原文和候选单号，请手动确认');
+        warnings.push(error instanceof AppError && error.code === 1017
+          ? '今日 LLM 调用额度已用尽；已保留原文和候选单号，请手动确认'
+          : '口述内容未能自动拆分；已保留原文和候选单号，请手动确认');
         parsedRecords = recordsFromCandidates(tracking.candidates, transcript);
       }
     } else {

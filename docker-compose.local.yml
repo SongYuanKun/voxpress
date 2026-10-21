@@ -11,8 +11,8 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=3000
-      - REVERSE_PROXY=${REVERSE_PROXY:-false}
-      - TRUST_PROXY=${TRUST_PROXY:-}
+      - REVERSE_PROXY=false
+      - TRUST_PROXY=
       - DB_PATH=/app/data/express.db
       - CORS_ORIGIN=*
     ports:

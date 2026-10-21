@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Html5Qrcode } from 'html5-qrcode';
 import { Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
 import { v4 as uuidv4 } from './utils/uuid';
 import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, type ExpressItem, type ExpressRecord, type VideoParsedRecord, type VideoParseResult } from './api/express';
 import ItemEditor from './components/ItemEditor.vue';
 import { useSpeech } from './composables/useSpeech';
+import { validateRawText } from './utils/rawText';
 
 const activeTab = ref('home');
 const trackingNumber = ref('');
@@ -24,26 +25,24 @@ const videoResult = ref<VideoParseResult | null>(null);
 const videoLoading = ref(false);
 const scannerOpen = ref(false);
 const { supported, listening, start, stop, speak } = useSpeech();
-const MAX_RAW_TEXT_CHARS = 1000;
 const scannerElementId = 'tracking-scanner';
 let scanner: Html5Qrcode | null = null;
+let scannerGeneration = 0;
 
 const validItems = computed(() => parsedItems.value.filter(item => item.name.trim()));
-const canSave = computed(() => trackingNumber.value.trim() && rawText.value.trim() && validItems.value.length > 0);
+const canSave = computed(() => trackingNumber.value.trim() && validateRawText(rawText.value).valid && validItems.value.length > 0);
 
 function notify(text: string) {
   if (ttsEnabled.value) speak(text);
 }
 
 async function parseCurrentText() {
-  if (!rawText.value.trim()) {
-    showToast('请先输入物品内容');
-    return;
-  }
+  const sourceText = validRawText(rawText.value, '物品内容');
+  if (!sourceText) return;
 
   loading.value = true;
   try {
-    const result = await parseText(rawText.value);
+    const result = await parseText(sourceText);
     parsedItems.value = result.items.length ? result.items : [{ name: '', quantity: 1, unit: '' }];
     notify('解析完成，请确认物品清单');
   } finally {
@@ -52,8 +51,9 @@ async function parseCurrentText() {
 }
 
 async function saveRecord(duplicateConfirmed = false) {
-  if (!canSave.value) {
-    showToast('请补全单号和物品清单');
+  const sourceText = validRawText(rawText.value, '物品内容');
+  if (!trackingNumber.value.trim() || !sourceText || !validItems.value.length) {
+    showToast('请补全单号、原文和物品清单');
     return;
   }
 
@@ -62,7 +62,7 @@ async function saveRecord(duplicateConfirmed = false) {
     await createRecord({
       client_request_id: uuidv4(),
       tracking_number: trackingNumber.value.trim(),
-      raw_text: rawText.value.trim(),
+      raw_text: sourceText,
       items: validItems.value,
       duplicate_confirmed: duplicateConfirmed
     });
@@ -158,13 +158,17 @@ function startSpeech() {
   if (!ok) showToast('当前浏览器不支持语音识别，请使用文字输入');
 }
 
+async function disposeScanner(current: Html5Qrcode) {
+  await current.stop().catch(() => undefined);
+  await current.clear().catch(() => undefined);
+}
+
 async function stopScanner() {
+  scannerGeneration += 1;
   const current = scanner;
   scanner = null;
   scannerOpen.value = false;
-  if (!current) return;
-  await current.stop().catch(() => undefined);
-  await current.clear().catch(() => undefined);
+  if (current) await disposeScanner(current);
 }
 
 async function startScanner() {
@@ -172,8 +176,10 @@ async function startScanner() {
     showToast('当前浏览器无法使用摄像头，请手动输入单号');
     return;
   }
+  const generation = ++scannerGeneration;
   scannerOpen.value = true;
   await nextTick();
+  if (generation !== scannerGeneration || activeTab.value !== 'home') return;
   const current = new Html5Qrcode(scannerElementId);
   scanner = current;
   try {
@@ -181,6 +187,7 @@ async function startScanner() {
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 250, height: 150 } },
       async (decodedText) => {
+        if (scanner !== current) return;
         trackingNumber.value = decodedText.trim();
         await stopScanner();
         showToast('单号已识别，请确认后继续录入');
@@ -188,23 +195,33 @@ async function startScanner() {
       },
       () => undefined
     );
+    if (scanner !== current || generation !== scannerGeneration || activeTab.value !== 'home') {
+      await disposeScanner(current);
+    }
   } catch {
-    if (scanner === current) await stopScanner();
+    if (scanner === current) {
+      scanner = null;
+      scannerOpen.value = false;
+    }
+    await disposeScanner(current);
     showToast('无法打开摄像头，请允许权限后重试或手动输入');
   }
 }
 
 function validRawText(value: string, fieldName: string) {
-  const rawText = value.trim();
-  if (!rawText) {
-    showToast(`${fieldName}不能为空，请先补充原文`);
+  const result = validateRawText(value);
+  if (!result.valid) {
+    showToast(`${fieldName}${result.message}`);
     return null;
   }
-  if (rawText.length > MAX_RAW_TEXT_CHARS) {
-    showToast(`${fieldName}超过 ${MAX_RAW_TEXT_CHARS} 字，请编辑后再解析或保存`);
-    return null;
-  }
-  return rawText;
+  return result.value;
+}
+
+function videoRecordProblem(record: VideoParsedRecord) {
+  if (!record.tracking_number.trim()) return '未填写快递单号';
+  if (!validateRawText(record.raw_text).valid) return '原文为空或超过 1000 字';
+  if (!record.items.some(item => item.name.trim())) return '未填写物品清单';
+  return null;
 }
 
 function onVideoSelected(event: Event) {
@@ -240,11 +257,14 @@ async function parseVideoRawText() {
     if (videoResult.value.records.length === 1) {
       await parseVideoRecordRawText(videoResult.value.records[0]);
     } else {
-      for (const record of videoResult.value.records) {
-        if (record.raw_text.trim()) {
-          const parsed = await parseText(record.raw_text);
-          record.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
-        }
+      const records = videoResult.value.records.map((record, index) => ({
+        record,
+        rawText: validRawText(record.raw_text, `第 ${index + 1} 单口述`)
+      }));
+      if (records.some(({ rawText }) => !rawText)) return;
+      for (const { record, rawText } of records) {
+        const parsed = await parseText(rawText!);
+        record.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
       }
     }
     showToast('物品解析完成');
@@ -329,15 +349,13 @@ async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = f
 
 async function saveAllVideoRecords() {
   if (!videoResult.value) return;
-  const validRecords = videoResult.value.records.filter(record =>
-    record.tracking_number && record.raw_text.trim() && record.raw_text.trim().length <= MAX_RAW_TEXT_CHARS && record.items.some(item => item.name.trim())
-  );
-  if (!validRecords.length) {
-    showToast('没有可入库的记录');
+  const invalidIndex = videoResult.value.records.findIndex((record) => videoRecordProblem(record));
+  if (invalidIndex !== -1) {
+    showToast(`第 ${invalidIndex + 1} 单${videoRecordProblem(videoResult.value.records[invalidIndex])}，请修正后再批量入库`);
     return;
   }
 
-  for (const record of validRecords) {
+  for (const record of videoResult.value.records) {
     await saveVideoRecord(record, false);
   }
   showToast('批量入库完成');
@@ -352,6 +370,10 @@ onMounted(() => {
       message: '请输入部署时配置的 APP_AUTH_TOKEN 后再使用。'
     });
   }
+});
+
+watch(activeTab, (tab) => {
+  if (tab !== 'home') void stopScanner();
 });
 
 onUnmounted(() => { void stopScanner(); });
