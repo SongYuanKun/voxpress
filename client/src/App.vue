@@ -161,7 +161,11 @@ function startSpeech() {
 }
 
 async function disposeScanner(current: Html5Qrcode) {
-  await current.stop().catch(() => undefined);
+  try {
+    await current.stop();
+  } catch {
+    // stop() can throw synchronously while camera startup is still pending.
+  }
   try {
     current.clear();
   } catch {
