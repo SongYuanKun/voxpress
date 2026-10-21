@@ -48,6 +48,11 @@ Deployment follows the existing `au / au_message` style:
 - `/api/health` is used for healthcheck
 - 1Panel/OpenResty should terminate HTTPS and reverse proxy to `127.0.0.1:8086`
 
+The Compose port binds only to loopback. When enabling `REVERSE_PROXY=true`, set
+`TRUST_PROXY` to the OpenResty source IP or CIDR. The server refuses to start in
+reverse-proxy mode without that explicit value, so rate limiting uses the actual
+client IP rather than one shared proxy address.
+
 ## LLM Config
 
 ```env
@@ -56,10 +61,10 @@ LLM_API_BASE=https://api.deepseek.com/v1
 LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
 LLM_MODEL=deepseek-v4-flash
 LLM_TIMEOUT_MS=15000
-LLM_MAX_RETRIES=1
 LLM_MAX_INPUT_CHARS=1000
 LLM_TEMPERATURE=0
 LLM_MAX_OUTPUT_TOKENS=800
+LLM_DAILY_LIMIT=1000
 ```
 
 LLM keys are server-only. The frontend never calls the LLM provider directly.
@@ -83,3 +88,7 @@ ASR_MAX_RETRIES=1
 ```
 
 DeepSeek v4-flash/pro currently works for text structuring in this app, but the tested API rejects image input and does not provide a compatible audio transcription endpoint. VoxPress therefore keeps tracking-number recognition local and keeps ASR as a separate OpenAI-compatible provider.
+
+## Backup
+
+Backups are manual only; no application cron is created. Run `npm --prefix server run backup` when needed. It uses SQLite's backup API, writes under `BACKUP_DIR`, records the result in `backup_logs`, and retains seven days by default.

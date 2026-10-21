@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { config } from '../config/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { parsedItemsSchema, type ParsedItems } from '../schemas/express.js';
+import { reserveLlmCall } from './llmQuotaService.js';
+import { runMeteredCall } from './meteredCall.js';
 
 const systemPrompt = `你是一个快递入库物品信息结构化解析助手。
 用户会提供一段中文口述或文本描述，你只需要提取物品名称、数量和单位。
@@ -26,7 +28,7 @@ function buildClient() {
     apiKey: config.llm.apiKey,
     baseURL: config.llm.apiBase,
     timeout: config.llm.timeoutMs,
-    maxRetries: config.llm.maxRetries
+    maxRetries: 0
   });
 }
 
@@ -39,7 +41,7 @@ function buildAsrClient() {
     apiKey: config.asr.apiKey,
     baseURL: config.asr.apiBase,
     timeout: config.asr.timeoutMs,
-    maxRetries: config.asr.maxRetries
+    maxRetries: 0
   });
 }
 
@@ -57,7 +59,7 @@ export async function parseItems(rawText: string): Promise<ParsedItems> {
   let responseText = '';
 
   try {
-    const response = await client.chat.completions.create({
+    const response = await runMeteredCall(reserveLlmCall, () => client.chat.completions.create({
       model: config.llm.model,
       temperature: config.llm.temperature,
       max_tokens: config.llm.maxOutputTokens,
@@ -66,7 +68,7 @@ export async function parseItems(rawText: string): Promise<ParsedItems> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: input }
       ]
-    });
+    }));
 
     responseText = response.choices[0]?.message?.content || '';
   } catch (error) {
@@ -114,7 +116,7 @@ export async function parseVideoRecords(rawText: string, trackingCandidates: str
   let responseText = '';
 
   try {
-    const response = await client.chat.completions.create({
+    const response = await runMeteredCall(reserveLlmCall, () => client.chat.completions.create({
       model: config.llm.model,
       temperature: config.llm.temperature,
       max_tokens: Math.max(config.llm.maxOutputTokens, 1200),
@@ -129,7 +131,7 @@ export async function parseVideoRecords(rawText: string, trackingCandidates: str
           })
         }
       ]
-    });
+    }));
 
     responseText = response.choices[0]?.message?.content || '';
   } catch {
@@ -174,7 +176,7 @@ export async function recognizeTrackingFromFrames(framePaths: string[]): Promise
   let responseText = '';
 
   try {
-    const response = await client.chat.completions.create({
+    const response = await runMeteredCall(reserveLlmCall, () => client.chat.completions.create({
       model: config.llm.model,
       temperature: 0,
       max_tokens: 400,
@@ -192,7 +194,7 @@ export async function recognizeTrackingFromFrames(framePaths: string[]): Promise
           ]
         }
       ]
-    });
+    }));
     responseText = response.choices[0]?.message?.content || '';
   } catch {
     throw new AppError(1012, 504, '视频画面识别失败，请确认 LLM 模型支持图片输入');
@@ -214,11 +216,11 @@ export async function transcribeAudio(audioPath: string): Promise<string> {
   const client = buildAsrClient();
 
   try {
-    const result = await client.audio.transcriptions.create({
+    const result = await runMeteredCall(reserveLlmCall, () => client.audio.transcriptions.create({
       file: fs.createReadStream(audioPath),
       model: config.asr.model,
       language: 'zh'
-    });
+    }));
     return (result.text || '').trim();
   } catch {
     throw new AppError(1014, 504, '音频转文字失败，请确认 ASR_API_BASE/ASR_MODEL 支持 audio transcriptions');

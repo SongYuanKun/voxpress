@@ -54,6 +54,6 @@ app.get('*', (_req, res) => {
 });
 app.use(errorHandler);
 
-app.listen(config.port, '0.0.0.0', () => {
-  logger.info({ port: config.port }, 'VoxPress server started');
+app.listen(config.port, config.host, () => {
+  logger.info({ host: config.host, port: config.port, reverseProxy: config.reverseProxy }, 'VoxPress server started');
 });

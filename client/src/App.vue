@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { Html5Qrcode } from 'html5-qrcode';
 import { Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
 import { v4 as uuidv4 } from './utils/uuid';
 import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, type ExpressItem, type ExpressRecord, type VideoParsedRecord, type VideoParseResult } from './api/express';
@@ -15,11 +16,17 @@ const selected = ref<ExpressRecord | null>(null);
 const loading = ref(false);
 const ttsEnabled = ref(true);
 const keyword = ref('');
+const dateFrom = ref('');
+const dateTo = ref('');
 const accessToken = ref(localStorage.getItem('voxpress_token') || '');
 const videoFile = ref<File | null>(null);
 const videoResult = ref<VideoParseResult | null>(null);
 const videoLoading = ref(false);
+const scannerOpen = ref(false);
 const { supported, listening, start, stop, speak } = useSpeech();
+const MAX_RAW_TEXT_CHARS = 1000;
+const scannerElementId = 'tracking-scanner';
+let scanner: Html5Qrcode | null = null;
 
 const validItems = computed(() => parsedItems.value.filter(item => item.name.trim()));
 const canSave = computed(() => trackingNumber.value.trim() && rawText.value.trim() && validItems.value.length > 0);
@@ -81,7 +88,11 @@ async function saveRecord(duplicateConfirmed = false) {
 
 async function refreshRecords() {
   if (!accessToken.value) return;
-  const data = await listRecords({ keyword: keyword.value || undefined });
+  const data = await listRecords({
+    keyword: keyword.value || undefined,
+    date_from: dateFrom.value || undefined,
+    date_to: dateTo.value || undefined
+  });
   records.value = data.list;
 }
 
@@ -97,7 +108,11 @@ function saveToken() {
 }
 
 async function downloadCsv() {
-  const blob = await exportCsv({ keyword: keyword.value || undefined });
+  const blob = await exportCsv({
+    keyword: keyword.value || undefined,
+    date_from: dateFrom.value || undefined,
+    date_to: dateTo.value || undefined
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -143,6 +158,55 @@ function startSpeech() {
   if (!ok) showToast('当前浏览器不支持语音识别，请使用文字输入');
 }
 
+async function stopScanner() {
+  const current = scanner;
+  scanner = null;
+  scannerOpen.value = false;
+  if (!current) return;
+  await current.stop().catch(() => undefined);
+  await current.clear().catch(() => undefined);
+}
+
+async function startScanner() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast('当前浏览器无法使用摄像头，请手动输入单号');
+    return;
+  }
+  scannerOpen.value = true;
+  await nextTick();
+  const current = new Html5Qrcode(scannerElementId);
+  scanner = current;
+  try {
+    await current.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 150 } },
+      async (decodedText) => {
+        trackingNumber.value = decodedText.trim();
+        await stopScanner();
+        showToast('单号已识别，请确认后继续录入');
+        notify('单号已识别');
+      },
+      () => undefined
+    );
+  } catch {
+    if (scanner === current) await stopScanner();
+    showToast('无法打开摄像头，请允许权限后重试或手动输入');
+  }
+}
+
+function validRawText(value: string, fieldName: string) {
+  const rawText = value.trim();
+  if (!rawText) {
+    showToast(`${fieldName}不能为空，请先补充原文`);
+    return null;
+  }
+  if (rawText.length > MAX_RAW_TEXT_CHARS) {
+    showToast(`${fieldName}超过 ${MAX_RAW_TEXT_CHARS} 字，请编辑后再解析或保存`);
+    return null;
+  }
+  return rawText;
+}
+
 function onVideoSelected(event: Event) {
   const input = event.target as HTMLInputElement;
   videoFile.value = input.files?.[0] || null;
@@ -170,10 +234,7 @@ async function submitVideo() {
 }
 
 async function parseVideoRawText() {
-  if (!videoResult.value?.raw_text.trim()) {
-    showToast('请先补充口述内容');
-    return;
-  }
+  if (!videoResult.value || !validRawText(videoResult.value.raw_text, '完整口述')) return;
   videoLoading.value = true;
   try {
     if (videoResult.value.records.length === 1) {
@@ -193,11 +254,9 @@ async function parseVideoRawText() {
 }
 
 async function parseVideoRecordRawText(record: VideoParsedRecord) {
-  if (!record.raw_text.trim()) {
-    showToast('请先补充该单口述内容');
-    return;
-  }
-  const parsed = await parseText(record.raw_text);
+  const rawText = validRawText(record.raw_text, '本单口述');
+  if (!rawText) return;
+  const parsed = await parseText(rawText);
   record.items = parsed.items.length ? parsed.items : [{ name: '', quantity: 1, unit: '' }];
 }
 
@@ -237,8 +296,9 @@ function downloadVideoCsv() {
 
 async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = false) {
   const items = record.items.filter(item => item.name.trim());
-  if (!record.tracking_number || !items.length) {
-    showToast('请先补全单号和物品清单');
+  const rawText = validRawText(record.raw_text, '本单口述');
+  if (!record.tracking_number || !items.length || !rawText) {
+    showToast('请先补全单号、原文和物品清单');
     return;
   }
 
@@ -247,7 +307,7 @@ async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = f
     await createRecord({
       client_request_id: uuidv4(),
       tracking_number: record.tracking_number,
-      raw_text: record.raw_text || videoResult.value?.raw_text || '',
+      raw_text: rawText,
       items,
       duplicate_confirmed: duplicateConfirmed
     });
@@ -269,7 +329,9 @@ async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = f
 
 async function saveAllVideoRecords() {
   if (!videoResult.value) return;
-  const validRecords = videoResult.value.records.filter(record => record.tracking_number && record.items.some(item => item.name.trim()));
+  const validRecords = videoResult.value.records.filter(record =>
+    record.tracking_number && record.raw_text.trim() && record.raw_text.trim().length <= MAX_RAW_TEXT_CHARS && record.items.some(item => item.name.trim())
+  );
   if (!validRecords.length) {
     showToast('没有可入库的记录');
     return;
@@ -291,6 +353,8 @@ onMounted(() => {
     });
   }
 });
+
+onUnmounted(() => { void stopScanner(); });
 </script>
 
 <template>
@@ -314,6 +378,12 @@ onMounted(() => {
         </div>
 
         <Field v-model="trackingNumber" label="快递单号" placeholder="扫码或手动输入快递单号" clearable />
+        <div class="scanner-actions">
+          <Button plain type="primary" @click="scannerOpen ? stopScanner() : startScanner()">
+            {{ scannerOpen ? '关闭扫码' : '开始扫码' }}
+          </Button>
+        </div>
+        <div v-if="scannerOpen" :id="scannerElementId" class="scanner-view" />
         <Field
           v-model="rawText"
           label="物品描述"
@@ -358,6 +428,10 @@ onMounted(() => {
             <Button size="small" type="primary" @click="refreshRecords">搜索</Button>
           </template>
         </Field>
+        <div class="date-filters">
+          <Field v-model="dateFrom" label="开始日期" type="date" />
+          <Field v-model="dateTo" label="结束日期" type="date" />
+        </div>
         <Button block plain type="primary" @click="downloadCsv">导出 Excel/CSV</Button>
 
         <CellGroup inset>

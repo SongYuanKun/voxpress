@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS express_record_items (
 CREATE INDEX IF NOT EXISTS idx_item_name ON express_record_items(item_name);
 CREATE INDEX IF NOT EXISTS idx_record_id ON express_record_items(record_id);
 
+CREATE TABLE IF NOT EXISTS llm_usage (
+  usage_date TEXT PRIMARY KEY,
+  used_calls INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS backup_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   file_path TEXT NOT NULL,
