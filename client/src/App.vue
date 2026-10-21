@@ -28,6 +28,9 @@ const scannerOpen = ref(false);
 const { supported, listening, start, stop, speak } = useSpeech();
 const scannerElementId = 'tracking-scanner';
 let scanner: Html5Qrcode | null = null;
+const scannerStarts = new WeakMap<Html5Qrcode, Promise<unknown>>();
+const scannerDisposals = new WeakMap<Html5Qrcode, Promise<void>>();
+let scannerCleanup: Promise<void> = Promise.resolve();
 let scannerGeneration = 0;
 let savedVideoRecords = new WeakSet<VideoParsedRecord>();
 
@@ -161,16 +164,24 @@ function startSpeech() {
 }
 
 async function disposeScanner(current: Html5Qrcode) {
-  try {
-    await current.stop();
-  } catch {
-    // stop() can throw synchronously while camera startup is still pending.
-  }
-  try {
-    current.clear();
-  } catch {
-    // clear() is synchronous and can throw for an already-cleared view.
-  }
+  const existing = scannerDisposals.get(current);
+  if (existing) return existing;
+  const cleanup = (async () => {
+    const starting = scannerStarts.get(current);
+    if (starting) await starting.catch(() => undefined);
+    try {
+      await current.stop();
+    } catch {
+      // stop() can throw synchronously while camera startup is still pending.
+    }
+    try {
+      current.clear();
+    } catch {
+      // clear() is synchronous and can throw for an already-cleared view.
+    }
+  })();
+  scannerDisposals.set(current, cleanup);
+  return cleanup;
 }
 
 async function stopScanner() {
@@ -178,7 +189,8 @@ async function stopScanner() {
   const current = scanner;
   scanner = null;
   scannerOpen.value = false;
-  if (current) await disposeScanner(current);
+  if (current) scannerCleanup = disposeScanner(current);
+  await scannerCleanup;
 }
 
 async function startScanner() {
@@ -188,12 +200,13 @@ async function startScanner() {
   }
   const generation = ++scannerGeneration;
   scannerOpen.value = true;
+  await scannerCleanup;
   await nextTick();
   if (generation !== scannerGeneration || activeTab.value !== 'home') return;
   const current = new Html5Qrcode(scannerElementId);
   scanner = current;
   try {
-    await current.start(
+    const starting = current.start(
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 250, height: 150 } },
       async (decodedText) => {
@@ -204,7 +217,18 @@ async function startScanner() {
         notify('单号已识别');
       },
       () => undefined
-    );
+    ).then(async () => {
+      // start() resolves inside "playing", before the library's play() promise.
+      // Await playback settlement before allowing cleanup to remove the video.
+      const video = document.getElementById(scannerElementId)?.querySelector('video');
+      if (video) await video.play();
+    });
+    scannerStarts.set(current, starting);
+    try {
+      await starting;
+    } finally {
+      scannerStarts.delete(current);
+    }
     if (scanner !== current || generation !== scannerGeneration || activeTab.value !== 'home') {
       await disposeScanner(current);
     }
@@ -213,8 +237,11 @@ async function startScanner() {
       scanner = null;
       scannerOpen.value = false;
     }
-    await disposeScanner(current);
-    showToast('无法打开摄像头，请允许权限后重试或手动输入');
+    scannerCleanup = disposeScanner(current);
+    await scannerCleanup;
+    if (generation === scannerGeneration && activeTab.value === 'home') {
+      showToast('无法打开摄像头，请允许权限后重试或手动输入');
+    }
   }
 }
 
@@ -409,7 +436,7 @@ onUnmounted(() => { void stopScanner(); });
     <NavBar title="VoxPress" />
 
     <main class="content">
-      <section v-if="activeTab === 'home'" class="panel">
+      <section v-show="activeTab === 'home'" class="panel">
         <div class="token-bar">
           <Field v-model="accessToken" type="password" placeholder="访问 Token" clearable />
           <Button size="small" type="primary" @click="saveToken">保存</Button>
@@ -430,7 +457,7 @@ onUnmounted(() => { void stopScanner(); });
             {{ scannerOpen ? '关闭扫码' : '开始扫码' }}
           </Button>
         </div>
-        <div v-if="scannerOpen" :id="scannerElementId" class="scanner-view" />
+        <div v-show="scannerOpen" :id="scannerElementId" class="scanner-view" />
         <Field
           v-model="rawText"
           label="物品描述"

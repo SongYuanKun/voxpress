@@ -18,3 +18,7 @@ The builds exposed and fixed synchronous scanner `clear()` handling and SQLite q
 A real native SQLite test used only a newly created temporary database and backup directory. It verified quota exhaustion (429/code 1017), backup integrity (`ok`), record preservation, quota persistence and backup logging. Connections were closed and the temporary directory removed. No live database or AI API was used. Focused independent review approved the changes; `git diff --check` passed.
 
 Remaining validation: production Docker Node 20 runtime, real camera/browser flows and deployed Express/reverse-proxy integration. Local host build/test success does not establish deployment success. Vite's large-chunk warning remains.
+
+## Camera lifecycle follow-up (2026-10-21)
+
+Scanner cleanup now waits for startup and playback settlement, deduplicates disposal, and serializes reopening. The camera DOM stays attached during cancellation. Chrome fake-device verification delayed getUserMedia by five seconds then switched tabs: the acquired track ended, zero video elements remained, and zero console errors occurred. Client typecheck/build passed; physical camera permission UI was not tested.
