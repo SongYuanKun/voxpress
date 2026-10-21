@@ -46,6 +46,24 @@ test('quota survives reopening a temporary SQLite database and enforces the shar
   }
 });
 
+test('quota accepts SQLite changes counters configured as bigint', () => {
+  const store = quotaDb(':memory:');
+  const adapter = {
+    ...store.adapter,
+    prepare: (sql: string) => {
+      const statement = store.database.prepare(sql);
+      statement.setReadBigInts(true);
+      return statement;
+    }
+  };
+  try {
+    assert.equal(reserveDailyLlmQuota(adapter, 1, '2026-10-21'), true);
+    assert.equal(reserveDailyLlmQuota(adapter, 1, '2026-10-21'), false);
+  } finally {
+    store.database.close();
+  }
+});
+
 function reserveInWorker(filename: string, moduleUrl: string) {
   const source = `
     const { parentPort, workerData } = require('node:worker_threads');

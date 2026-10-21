@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "pretest": "npm run build",
+    "test": "node --experimental-strip-types --test src/routes/*.test.ts src/services/*.test.ts",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
@@ -33,5 +37,8 @@
     "@types/node": "^22.10.7",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
   }
 }

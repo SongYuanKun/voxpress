@@ -162,7 +162,11 @@ function startSpeech() {
 
 async function disposeScanner(current: Html5Qrcode) {
   await current.stop().catch(() => undefined);
-  await current.clear().catch(() => undefined);
+  try {
+    current.clear();
+  } catch {
+    // clear() is synchronous and can throw for an already-cleared view.
+  }
 }
 
 async function stopScanner() {

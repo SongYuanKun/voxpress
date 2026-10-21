@@ -1,4 +1,5 @@
-type Statement = { run: (...params: unknown[]) => { changes: number } };
+export type QuotaParameter = string | number;
+type Statement = { run: (...params: QuotaParameter[]) => { changes: number | bigint } };
 type QuotaDatabase = {
   prepare: (sql: string) => Statement;
   transaction: <T>(fn: () => T) => () => T;
@@ -10,9 +11,10 @@ export function reserveDailyLlmQuota(db: QuotaDatabase, dailyLimit: number, usag
     db.prepare(
       'INSERT INTO llm_usage (usage_date, used_calls) VALUES (?, 0) ON CONFLICT(usage_date) DO NOTHING'
     ).run(usageDate);
-    return db.prepare(
+    const changes = db.prepare(
       'UPDATE llm_usage SET used_calls = used_calls + 1 WHERE usage_date = ? AND used_calls < ?'
-    ).run(usageDate, dailyLimit).changes === 1;
+    ).run(usageDate, dailyLimit).changes;
+    return changes === 1 || changes === 1n;
   });
   return reserve();
 }
