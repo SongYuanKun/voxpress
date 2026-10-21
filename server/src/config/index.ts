@@ -16,10 +16,18 @@ const numberFromEnv = (key: string, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+// Only explicitly named proxy hops may supply X-Forwarded-For.  A bare
+// `true` would let every client choose its own rate-limit identity.
+const trustedProxy = (() => {
+  const value = (process.env.TRUST_PROXY || '').trim();
+  return value ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : false;
+})();
+
 export const config = {
   port: intFromEnv('PORT', 3000),
   authToken: process.env.APP_AUTH_TOKEN || '',
   corsOrigin: process.env.CORS_ORIGIN || '*',
+  trustedProxy,
   dbPath: process.env.DB_PATH || './data/express.db',
   uploadDir: process.env.UPLOAD_DIR || './data/uploads',
   video: {

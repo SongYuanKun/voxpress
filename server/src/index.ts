@@ -24,11 +24,13 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: '1mb' }));
+app.set('trust proxy', config.trustedProxy);
 app.use(rateLimit({
   windowMs: 60_000,
   limit: 120,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || req.socket.remoteAddress || 'unknown'
 }));
 
 app.get('/api/health', (_req, res) => {

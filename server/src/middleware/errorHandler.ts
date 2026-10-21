@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import multer from 'multer';
 import { ZodError } from 'zod';
 import { logger } from '../utils/logger.js';
 
@@ -22,6 +23,16 @@ export function asyncHandler<T extends Request>(
 }
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
+  if (err instanceof multer.MulterError) {
+    const isTooLarge = err.code === 'LIMIT_FILE_SIZE';
+    res.status(isTooLarge ? 413 : 400).json({
+      code: 1001,
+      data: { multer: err.code },
+      message: isTooLarge ? '上传文件超过大小限制' : '上传文件不符合要求'
+    });
+    return;
+  }
+
   if (err instanceof ZodError) {
     res.status(400).json({ code: 1001, data: err.flatten(), message: '参数校验失败' });
     return;

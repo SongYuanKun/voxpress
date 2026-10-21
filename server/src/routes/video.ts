@@ -142,22 +142,25 @@ async function recognizeTrackingLocally(framePaths: string[]): Promise<{ candida
     }
   }
 
-  const evidence = snippets.join('\n').slice(0, 300);
-  const trackingNumbers = pickTrackingNumbers(evidence);
+  // Extract candidates from every OCR/barcode result.  The clipped evidence is
+  // only for the response UI and must not decide which tracking numbers exist.
+  const fullEvidence = snippets.join('\n');
+  const evidence = fullEvidence.replace(/\s+/g, ' ').slice(0, 300);
+  const trackingNumbers = pickTrackingNumbers(fullEvidence);
   return {
     candidates: trackingNumbers.map((trackingNumber) => ({
       tracking_number: trackingNumber,
       confidence: 0.72,
-      evidence: evidence.replace(/\s+/g, ' ').slice(0, 160)
+      evidence: evidence.slice(0, 160)
     })),
     evidence: evidence.replace(/\s+/g, ' ').slice(0, 300)
   };
 }
 
-function recordsFromCandidates(candidates: TrackingCandidate[]): VideoParsedRecord[] {
-  return candidates.map((candidate) => ({
+function recordsFromCandidates(candidates: TrackingCandidate[], rawText = ''): VideoParsedRecord[] {
+  return candidates.map((candidate, index) => ({
     tracking_number: candidate.tracking_number,
-    raw_text: '',
+    raw_text: index === 0 ? rawText : '',
     items: []
   }));
 }
@@ -229,9 +232,19 @@ videoRouter.post('/parse', upload.single('video'), asyncHandler(async (req, res)
     }
 
     const trackingNumbers = tracking.candidates.map((candidate) => candidate.tracking_number);
-    const parsedRecords = transcript.trim()
-      ? await parseVideoRecords(transcript, trackingNumbers)
-      : recordsFromCandidates(tracking.candidates);
+    let parsedRecords: VideoParsedRecord[];
+    if (transcript.trim()) {
+      try {
+        parsedRecords = await parseVideoRecords(transcript, trackingNumbers);
+      } catch {
+        // The transcript and local OCR result remain useful for manual
+        // confirmation even when the optional LLM grouping call times out.
+        warnings.push('口述内容未能自动拆分；已保留原文和候选单号，请手动确认');
+        parsedRecords = recordsFromCandidates(tracking.candidates, transcript);
+      }
+    } else {
+      parsedRecords = recordsFromCandidates(tracking.candidates);
+    }
     const records = mergeRecordsWithCandidates(parsedRecords, tracking.candidates);
 
     res.json({
