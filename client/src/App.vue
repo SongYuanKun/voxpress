@@ -7,6 +7,7 @@ import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVid
 import ItemEditor from './components/ItemEditor.vue';
 import { useSpeech } from './composables/useSpeech';
 import { validateRawText } from './utils/rawText';
+import { savePendingVideoRecords, type VideoSaveOutcome } from './utils/videoBatch';
 
 const activeTab = ref('home');
 const trackingNumber = ref('');
@@ -28,6 +29,7 @@ const { supported, listening, start, stop, speak } = useSpeech();
 const scannerElementId = 'tracking-scanner';
 let scanner: Html5Qrcode | null = null;
 let scannerGeneration = 0;
+let savedVideoRecords = new WeakSet<VideoParsedRecord>();
 
 const validItems = computed(() => parsedItems.value.filter(item => item.name.trim()));
 const canSave = computed(() => trackingNumber.value.trim() && validateRawText(rawText.value).valid && validItems.value.length > 0);
@@ -228,6 +230,7 @@ function onVideoSelected(event: Event) {
   const input = event.target as HTMLInputElement;
   videoFile.value = input.files?.[0] || null;
   videoResult.value = null;
+  savedVideoRecords = new WeakSet<VideoParsedRecord>();
 }
 
 async function submitVideo() {
@@ -235,6 +238,7 @@ async function submitVideo() {
   videoLoading.value = true;
   try {
     videoResult.value = await parseVideo(videoFile.value);
+    savedVideoRecords = new WeakSet<VideoParsedRecord>();
     if (!videoResult.value.records.length) {
       videoResult.value.records = [{ tracking_number: '', tracking_confidence: 0, tracking_evidence: '', raw_text: videoResult.value.raw_text || '', items: [{ name: '', quantity: 1, unit: '' }] }];
     }
@@ -314,12 +318,12 @@ function downloadVideoCsv() {
   URL.revokeObjectURL(url);
 }
 
-async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = false) {
+async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = false): Promise<VideoSaveOutcome> {
   const items = record.items.filter(item => item.name.trim());
   const rawText = validRawText(record.raw_text, '本单口述');
   if (!record.tracking_number || !items.length || !rawText) {
     showToast('请先补全单号、原文和物品清单');
-    return;
+    return 'cancelled';
   }
 
   videoLoading.value = true;
@@ -331,17 +335,24 @@ async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = f
       items,
       duplicate_confirmed: duplicateConfirmed
     });
+    savedVideoRecords.add(record);
     showToast('视频入库成功');
     notify('视频入库成功');
-    await refreshRecords();
+    await refreshRecords().catch(() => undefined);
+    return 'saved';
   } catch (error: any) {
     if (error?.code === 1008) {
-      await showConfirmDialog({
-        title: '重复单号',
-        message: '该单号已有记录，是否仍然保存为新记录？'
-      });
-      await saveVideoRecord(record, true);
+      try {
+        await showConfirmDialog({
+          title: '重复单号',
+          message: '该单号已有记录，是否仍然保存为新记录？'
+        });
+      } catch {
+        return 'cancelled';
+      }
+      return saveVideoRecord(record, true);
     }
+    throw error;
   } finally {
     videoLoading.value = false;
   }
@@ -355,10 +366,16 @@ async function saveAllVideoRecords() {
     return;
   }
 
-  for (const record of videoResult.value.records) {
-    await saveVideoRecord(record, false);
+  const summary = await savePendingVideoRecords(
+    videoResult.value.records,
+    savedVideoRecords,
+    (record) => saveVideoRecord(record, false)
+  );
+  const message = `批量入库：成功 ${summary.saved}，失败 ${summary.failed}，取消 ${summary.cancelled}，已跳过 ${summary.skipped}`;
+  showToast(message);
+  if (summary.saved) {
+    notify(`已入库 ${summary.saved} 条`);
   }
-  showToast('批量入库完成');
 }
 
 onMounted(() => {
