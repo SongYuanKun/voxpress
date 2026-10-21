@@ -8,3 +8,6 @@ data/*.db-*
 logs/*.log
 .DS_Store
 
+# Local Claude workspace state
+.claude/worktrees/
+.claude/settings.local.json
