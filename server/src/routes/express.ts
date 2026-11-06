@@ -23,8 +23,8 @@ expressRouter.post('/', asyncHandler(async (req, res) => {
 
 expressRouter.get('/', asyncHandler(async (req, res) => {
   const query = z.object({
-    page: z.coerce.number().optional(),
-    page_size: z.coerce.number().optional(),
+    page: z.coerce.number().int().positive().safe().optional(),
+    page_size: z.coerce.number().int().positive().safe().optional(),
     keyword: z.string().optional(),
     date_from: z.string().optional(),
     date_to: z.string().optional()

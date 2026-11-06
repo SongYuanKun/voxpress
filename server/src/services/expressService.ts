@@ -105,6 +105,19 @@ export async function createRecord(input: {
   const clientRequestId = input.client_request_id || randomUUID();
 
   const tx = db.transaction(() => {
+    // Parsing yields to other requests. Recheck under the write lock before saving.
+    const saved = db.prepare('SELECT * FROM express_records WHERE client_request_id = ?').get(
+      clientRequestId
+    ) as RecordRow | undefined;
+    if (saved) return mapRecord(saved);
+
+    const savedDuplicate = db.prepare('SELECT id, tracking_number FROM express_records WHERE tracking_number = ? AND status = 1 LIMIT 1').get(
+      input.tracking_number
+    );
+    if (savedDuplicate && !input.duplicate_confirmed) {
+      throw new AppError(1008, 409, '快递单号已存在', savedDuplicate);
+    }
+
     const result = db.prepare(
       `INSERT INTO express_records
        (client_request_id, tracking_number, raw_text, original_json, custom_json)
@@ -114,11 +127,10 @@ export async function createRecord(input: {
     const recordId = Number(result.lastInsertRowid);
     insertItems(recordId, parsed.items, 1);
     insertItems(recordId, parsed.items, 0);
-    return recordId;
+    return getRecord(recordId);
   });
 
-  const id = tx();
-  return getRecord(id);
+  return tx.immediate();
 }
 
 export function listRecords(query: {
@@ -202,20 +214,24 @@ export function getRecord(id: number) {
 }
 
 export function updateRecord(id: number, customJson: ParsedItems) {
-  getRecord(id);
-  db.prepare('UPDATE express_records SET custom_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-    toJson(customJson),
-    id
-  );
-  replaceCustomItems(id, customJson.items);
-  return getRecord(id);
+  return db.transaction(() => {
+    getRecord(id);
+    db.prepare('UPDATE express_records SET custom_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+      toJson(customJson),
+      id
+    );
+    replaceCustomItems(id, customJson.items);
+    return getRecord(id);
+  }).immediate();
 }
 
 export function resetRecord(id: number) {
-  const record = getRecord(id);
-  db.prepare('UPDATE express_records SET custom_json = original_json, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
-  replaceCustomItems(id, record.original_json.items);
-  return getRecord(id);
+  return db.transaction(() => {
+    const record = getRecord(id);
+    db.prepare('UPDATE express_records SET custom_json = original_json, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    replaceCustomItems(id, record.original_json.items);
+    return getRecord(id);
+  }).immediate();
 }
 
 export function deleteRecord(id: number) {
