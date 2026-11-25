@@ -6,7 +6,7 @@
   "scripts": {
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "pretest": "npm run build",
-    "test": "node --experimental-strip-types --test src/routes/*.test.ts src/services/*.test.ts",
+    "test": "node --experimental-strip-types --test src/routes/*.test.ts src/services/*.test.ts src/schemas/*.test.ts src/db/*.test.ts",
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

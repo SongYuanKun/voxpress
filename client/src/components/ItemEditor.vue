@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Button, Field, Stepper } from 'vant';
+import { Button, Field } from 'vant';
 import type { ExpressItem } from '../api/express';
 
 const props = defineProps<{
@@ -27,6 +27,14 @@ function remove(index: number) {
 function add() {
   items.value = [...items.value, { name: '', quantity: 1, unit: '' }];
 }
+
+function parseQuantity(value: string | number) {
+  const raw = String(value).trim();
+  if (!raw) return 1;
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num <= 0) return 1;
+  return Number(num.toFixed(4));
+}
 </script>
 
 <template>
@@ -38,11 +46,13 @@ function add() {
         placeholder="物品名"
         @update:model-value="value => update(index, { name: String(value) })"
       />
-      <Stepper
-        :model-value="item.quantity"
-        integer
-        min="1"
-        @update:model-value="value => update(index, { quantity: Number(value) })"
+      <Field
+        class="item-qty"
+        type="number"
+        inputmode="decimal"
+        :model-value="String(item.quantity)"
+        placeholder="数量"
+        @update:model-value="value => update(index, { quantity: parseQuantity(value) })"
       />
       <Field
         class="item-unit"
@@ -55,4 +65,3 @@ function add() {
     <Button block plain type="primary" @click="add">添加物品</Button>
   </div>
 </template>
-

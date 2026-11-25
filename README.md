@@ -6,9 +6,10 @@ Core MVP flow:
 
 1. Enter or scan tracking number.
 2. Type or speak parcel contents.
-3. Use an LLM to parse contents into `name + quantity + unit`.
-4. Confirm and save into SQLite.
-5. Search, edit, reset, or soft-delete records.
+3. Use an LLM to parse contents into `name + quantity + unit` (quantity supports decimals, e.g. `12.5`).
+4. Optionally attach a weighing photo and a packing photo, plus a platform order number / buyer note.
+5. Confirm and save into SQLite.
+6. Search (including platform order notes), edit, reset, or soft-delete records; export CSV with photo path refs.
 
 Video flow:
 
@@ -98,3 +99,20 @@ mounted `./backups` path. The command uses SQLite's backup API, records the resu
 in `backup_logs`, and retains seven days by default.
 
 Dates in list filtering and CSV export use the warehouse business day, UTC+08:00.
+
+## Database migration (deploy)
+
+On startup the server runs additive SQLite migrations automatically:
+
+1. Adds `platform`, `platform_order_note`, `weighing_photo`, and `packing_photo` columns to `express_records` when missing.
+2. Rebuilds `express_record_items` so `quantity` uses `REAL` affinity (existing integer rows are preserved via `CAST`).
+3. Creates `idx_platform_order_note` when missing.
+
+Deploy steps:
+
+1. Back up the live DB first (`npm --prefix server run backup` or copy `./data/express.db*`).
+2. Redeploy / restart the container (`docker compose up --build -d`).
+3. Confirm `/api/health` is healthy; migrations run during process boot before traffic.
+4. Photos are stored under `UPLOAD_DIR/photos/<recordId>/` (mounted `./data/uploads` in Compose). No manual SQL is required for a normal upgrade.
+
+CSV export now includes columns: 平台, 平台订单号或买家备注, 称重照, 装箱照 (photo cells are relative paths such as `photos/12/weighing.jpg`).
