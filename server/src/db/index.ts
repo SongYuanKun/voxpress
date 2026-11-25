@@ -3,11 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config/index.js';
+import { runMigrations } from './migrate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
+fs.mkdirSync(path.join(config.uploadDir, 'photos'), { recursive: true });
 
 export const db = new Database(config.dbPath);
 db.pragma('journal_mode = WAL');
@@ -18,3 +20,4 @@ const schemaPath = fs.existsSync(path.join(__dirname, 'schema.sql'))
   : path.resolve(__dirname, '../../src/db/schema.sql');
 const schema = fs.readFileSync(schemaPath, 'utf8');
 db.exec(schema);
+runMigrations(db);

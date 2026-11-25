@@ -30,7 +30,7 @@ COPY --from=server-build /app/server/dist ./server/dist
 COPY --from=server-build /app/server/src/db/schema.sql ./server/dist/db/schema.sql
 COPY --from=client-build /app/client/dist ./client/dist
 
-RUN mkdir -p /app/data /app/data/uploads /app/logs /app/backups
+RUN mkdir -p /app/data /app/data/uploads /app/data/uploads/photos /app/logs /app/backups
 
 EXPOSE 3000
 CMD ["node", "server/dist/index.js"]

@@ -39,8 +39,15 @@ test('compiled quota and backup services preserve real native SQLite data', asyn
       error instanceof Error && 'code' in error && error.code === 1017 &&
       'status' in error && error.status === 429
     );
-    db.prepare('INSERT INTO express_records (client_request_id, tracking_number, raw_text, original_json, custom_json) VALUES (?, ?, ?, ?, ?)')
-      .run('fixture-request', 'FIXTURE-TRACKING', 'fixture input', '{}', '{}');
+    db.prepare('INSERT INTO express_records (client_request_id, tracking_number, raw_text, original_json, custom_json, platform, platform_order_note) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('fixture-request', 'FIXTURE-TRACKING', 'fixture input', '{}', '{}', '闲鱼', 'ORDER-42');
+    db.prepare('INSERT INTO express_record_items (record_id, item_name, quantity, unit, is_original) VALUES (?, ?, ?, ?, ?)')
+      .run(1, '黄金', 12.5, '克', 0);
+    const quantityType = (db.pragma('table_info(express_record_items)') as Array<{ name: string; type: string }>)
+      .find((column) => column.name === 'quantity')?.type.toUpperCase();
+    assert.equal(quantityType, 'REAL');
+    assert.equal(db.prepare<[], { quantity: number }>('SELECT quantity FROM express_record_items').get()?.quantity, 12.5);
+    assert.equal(db.prepare<[], { platform_order_note: string }>('SELECT platform_order_note FROM express_records').get()?.platform_order_note, 'ORDER-42');
     const { createDatabaseBackup }: typeof import('./backupService.js') = await import(
       new URL('../../dist/services/backupService.js', import.meta.url).href
     );

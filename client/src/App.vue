@@ -1,18 +1,31 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Button, Cell, CellGroup, Field, NavBar, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
+import { Button, Cell, CellGroup, Field, NavBar, Radio, RadioGroup, Tabbar, TabbarItem, Tag, showConfirmDialog, showDialog, showToast } from 'vant';
 import { v4 as uuidv4 } from './utils/uuid';
-import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, type ExpressItem, type ExpressRecord, type VideoParsedRecord, type VideoParseResult } from './api/express';
+import { createRecord, deleteRecord, exportCsv, listRecords, parseText, parseVideo, resetRecord, updateRecord, uploadRecordPhotos, type ExpressItem, type ExpressRecord, type Platform, type VideoParsedRecord, type VideoParseResult } from './api/express';
 import ItemEditor from './components/ItemEditor.vue';
+import PhotoAttach from './components/PhotoAttach.vue';
 import { useSpeech } from './composables/useSpeech';
 import { validateRawText } from './utils/rawText';
 import { savePendingVideoRecords, type VideoSaveOutcome } from './utils/videoBatch';
+
+const PLATFORM_OPTIONS: Array<{ label: string; value: Platform }> = [
+  { label: '不选', value: '' },
+  { label: '闲鱼', value: '闲鱼' },
+  { label: '微店', value: '微店' },
+  { label: '小红书', value: '小红书' },
+  { label: '其他', value: '其他' }
+];
 
 const activeTab = ref('home');
 const trackingNumber = ref('');
 const rawText = ref('');
 const parsedItems = ref<ExpressItem[]>([]);
+const platform = ref<Platform>('');
+const platformOrderNote = ref('');
+const pendingWeighing = ref<File | null>(null);
+const pendingPacking = ref<File | null>(null);
 const records = ref<ExpressRecord[]>([]);
 const selected = ref<ExpressRecord | null>(null);
 const loading = ref(false);
@@ -64,19 +77,36 @@ async function saveRecord(duplicateConfirmed = false) {
 
   loading.value = true;
   try {
-    await createRecord({
+    const record = await createRecord({
       client_request_id: uuidv4(),
       tracking_number: trackingNumber.value.trim(),
       raw_text: sourceText,
       items: validItems.value,
+      platform: platform.value,
+      platform_order_note: platformOrderNote.value.trim(),
       duplicate_confirmed: duplicateConfirmed
     });
+
+    if (pendingWeighing.value || pendingPacking.value) {
+      try {
+        await uploadRecordPhotos(record.id, {
+          weighing: pendingWeighing.value,
+          packing: pendingPacking.value
+        });
+      } catch {
+        showToast('入库成功，但照片上传失败，可在详情中重试');
+      }
+    }
 
     showToast('入库成功');
     notify('入库成功');
     trackingNumber.value = '';
     rawText.value = '';
     parsedItems.value = [];
+    platform.value = '';
+    platformOrderNote.value = '';
+    pendingWeighing.value = null;
+    pendingPacking.value = null;
     await refreshRecords();
   } catch (error: any) {
     if (error?.code === 1008) {
@@ -135,9 +165,26 @@ async function openRecord(record: ExpressRecord) {
 
 async function saveSelected() {
   if (!selected.value) return;
-  selected.value = await updateRecord(selected.value.id, selected.value.custom_json);
+  selected.value = await updateRecord(selected.value.id, {
+    custom_json: selected.value.custom_json,
+    platform: selected.value.platform,
+    platform_order_note: selected.value.platform_order_note
+  });
   await refreshRecords();
   showToast('已保存修改');
+}
+
+function onSelectedPhotoUpdated(record: ExpressRecord) {
+  selected.value = record;
+  void refreshRecords();
+}
+
+function recordSubtitle(record: ExpressRecord) {
+  const items = record.custom_json.items.map(item => item.name + item.quantity + item.unit).join('，');
+  const note = record.platform_order_note?.trim();
+  const platformLabel = record.platform ? `[${record.platform}] ` : '';
+  if (note) return `${platformLabel}${note} · ${items}`;
+  return `${platformLabel}${items}`;
 }
 
 async function resetSelected() {
@@ -275,12 +322,14 @@ async function submitVideo() {
     videoResult.value = await parseVideo(videoFile.value);
     savedVideoRecords = new WeakSet<VideoParsedRecord>();
     if (!videoResult.value.records.length) {
-      videoResult.value.records = [{ tracking_number: '', tracking_confidence: 0, tracking_evidence: '', raw_text: videoResult.value.raw_text || '', items: [{ name: '', quantity: 1, unit: '' }] }];
+      videoResult.value.records = [{ tracking_number: '', tracking_confidence: 0, tracking_evidence: '', raw_text: videoResult.value.raw_text || '', items: [{ name: '', quantity: 1, unit: '' }], platform: '', platform_order_note: '' }];
     }
     for (const record of videoResult.value.records) {
       if (!record.items.length) {
         record.items = [{ name: '', quantity: 1, unit: '' }];
       }
+      if (record.platform === undefined) record.platform = '';
+      if (record.platform_order_note === undefined) record.platform_order_note = '';
     }
     showToast('视频解析完成');
     notify('视频解析完成，请确认结果');
@@ -330,10 +379,12 @@ function csvCell(value: unknown) {
 function downloadVideoCsv() {
   if (!videoResult.value) return;
   const rows = [
-    ['快递单号', '口述内容', '物品名', '数量', '单位'],
+    ['快递单号', '平台', '平台订单号或买家备注', '口述内容', '物品名', '数量', '单位'],
     ...videoResult.value.records.flatMap(record =>
       record.items.map(item => [
         record.tracking_number,
+        record.platform || '',
+        record.platform_order_note || '',
         record.raw_text,
         item.name,
         item.quantity,
@@ -368,6 +419,8 @@ async function saveVideoRecord(record: VideoParsedRecord, duplicateConfirmed = f
       tracking_number: record.tracking_number,
       raw_text: rawText,
       items,
+      platform: record.platform || '',
+      platform_order_note: (record.platform_order_note || '').trim(),
       duplicate_confirmed: duplicateConfirmed
     });
     savedVideoRecords.add(record);
@@ -464,8 +517,21 @@ onUnmounted(() => { void stopScanner(); });
           type="textarea"
           rows="3"
           autosize
-          placeholder="例如：5张相纸，2个手机壳，一盒胶带"
+          placeholder="例如：黄金 12.5 克，白银 3.2 克，相纸 3 寸 × 2 盒"
         />
+
+        <Field
+          v-model="platformOrderNote"
+          label="平台订单号/备注"
+          placeholder="闲鱼/微店订单号或买家备注（可选）"
+          clearable
+        />
+        <div class="platform-picker">
+          <span class="platform-label">销售平台</span>
+          <RadioGroup v-model="platform" direction="horizontal">
+            <Radio v-for="option in PLATFORM_OPTIONS" :key="option.value || 'none'" :name="option.value">{{ option.label }}</Radio>
+          </RadioGroup>
+        </div>
 
         <div class="actions">
           <Button type="primary" plain @click="startSpeech" @touchend="stop">
@@ -476,6 +542,14 @@ onUnmounted(() => { void stopScanner(); });
 
         <ItemEditor v-if="parsedItems.length" v-model="parsedItems" />
 
+        <PhotoAttach
+          :record="null"
+          :pending-weighing="pendingWeighing"
+          :pending-packing="pendingPacking"
+          @update:pending-weighing="pendingWeighing = $event"
+          @update:pending-packing="pendingPacking = $event"
+        />
+
         <Button block type="success" :disabled="!canSave" :loading="loading" @click="saveRecord(false)">确认入库</Button>
 
         <h3>最近入库</h3>
@@ -484,7 +558,7 @@ onUnmounted(() => { void stopScanner(); });
             v-for="record in records.slice(0, 3)"
             :key="record.id"
             :title="record.tracking_number"
-            :label="record.custom_json.items.map(item => item.name + item.quantity + item.unit).join('，')"
+            :label="recordSubtitle(record)"
             is-link
             @click="openRecord(record)"
           />
@@ -497,7 +571,7 @@ onUnmounted(() => { void stopScanner(); });
           <Button size="small" type="primary" @click="saveToken">保存</Button>
         </div>
 
-        <Field v-model="keyword" placeholder="搜索单号或物品名" clearable @keyup.enter="refreshRecords">
+        <Field v-model="keyword" placeholder="搜索单号、物品名或平台订单号" clearable @keyup.enter="refreshRecords">
           <template #button>
             <Button size="small" type="primary" @click="refreshRecords">搜索</Button>
           </template>
@@ -513,7 +587,7 @@ onUnmounted(() => { void stopScanner(); });
             v-for="record in records"
             :key="record.id"
             :title="record.tracking_number"
-            :label="record.custom_json.items.map(item => item.name + item.quantity + item.unit).join('，')"
+            :label="recordSubtitle(record)"
             is-link
             @click="openRecord(record)"
           >
@@ -528,7 +602,20 @@ onUnmounted(() => { void stopScanner(); });
         <template v-if="selected">
           <h3>{{ selected.tracking_number }}</h3>
           <p class="muted">原文：{{ selected.raw_text }}</p>
+          <Field
+            v-model="selected.platform_order_note"
+            label="平台订单号/备注"
+            placeholder="闲鱼/微店订单号或买家备注（可选）"
+            clearable
+          />
+          <div class="platform-picker">
+            <span class="platform-label">销售平台</span>
+            <RadioGroup v-model="selected.platform" direction="horizontal">
+              <Radio v-for="option in PLATFORM_OPTIONS" :key="option.value || 'none'" :name="option.value">{{ option.label }}</Radio>
+            </RadioGroup>
+          </div>
           <ItemEditor v-model="selected.custom_json.items" />
+          <PhotoAttach :record="selected" @updated="onSelectedPhotoUpdated" />
           <div class="actions vertical">
             <Button type="primary" block @click="saveSelected">保存修改</Button>
             <Button plain block @click="resetSelected">恢复初始数据</Button>
@@ -593,8 +680,20 @@ onUnmounted(() => { void stopScanner(); });
               type="textarea"
               rows="2"
               autosize
-              placeholder="例如：这个单号里面是 5 张相纸，2 个手机壳"
+              placeholder="例如：这个单号里面是黄金 12.5 克"
             />
+            <Field
+              v-model="record.platform_order_note"
+              label="平台订单号/备注"
+              placeholder="可选"
+              clearable
+            />
+            <div class="platform-picker">
+              <span class="platform-label">销售平台</span>
+              <RadioGroup v-model="record.platform" direction="horizontal">
+                <Radio v-for="option in PLATFORM_OPTIONS" :key="option.value || 'none'" :name="option.value">{{ option.label }}</Radio>
+              </RadioGroup>
+            </div>
             <Button size="small" plain type="primary" :loading="videoLoading" @click="parseVideoRecordRawText(record)">解析本单口述</Button>
             <ItemEditor v-model="record.items" />
             <Button block type="success" :loading="videoLoading" @click="saveVideoRecord(record, false)">保存这一单</Button>

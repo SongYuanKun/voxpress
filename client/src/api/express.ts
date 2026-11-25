@@ -10,12 +10,18 @@ export type ParsedItems = {
   items: ExpressItem[];
 };
 
+export type Platform = '' | '闲鱼' | '微店' | '小红书' | '其他';
+
+export type PhotoKind = 'weighing' | 'packing';
+
 export type VideoParsedRecord = {
   tracking_number: string;
   tracking_confidence: number;
   tracking_evidence: string;
   raw_text: string;
   items: ExpressItem[];
+  platform?: Platform;
+  platform_order_note?: string;
 };
 
 export type VideoParseResult = {
@@ -34,6 +40,14 @@ export type ExpressRecord = {
   raw_text: string;
   original_json: ParsedItems;
   custom_json: ParsedItems;
+  platform: Platform | string;
+  platform_order_note: string;
+  weighing_photo: string | null;
+  packing_photo: string | null;
+  weighing_photo_url: string;
+  packing_photo_url: string;
+  weighing_photo_export?: string;
+  packing_photo_export?: string;
   is_modified: boolean;
   sync_status: string;
   created_at: string;
@@ -56,6 +70,8 @@ export async function createRecord(payload: {
   tracking_number: string;
   raw_text: string;
   items: ExpressItem[];
+  platform?: Platform | string;
+  platform_order_note?: string;
   duplicate_confirmed?: boolean;
 }) {
   const res = await request.post<unknown, ApiResponse<ExpressRecord>>('/express', payload);
@@ -80,8 +96,12 @@ export async function getRecord(id: number) {
   return res.data;
 }
 
-export async function updateRecord(id: number, custom_json: ParsedItems) {
-  const res = await request.patch<unknown, ApiResponse<ExpressRecord>>(`/express/${id}`, { custom_json });
+export async function updateRecord(id: number, payload: {
+  custom_json?: ParsedItems;
+  platform?: Platform | string;
+  platform_order_note?: string;
+}) {
+  const res = await request.patch<unknown, ApiResponse<ExpressRecord>>(`/express/${id}`, payload);
   return res.data;
 }
 
@@ -93,6 +113,32 @@ export async function resetRecord(id: number) {
 export async function deleteRecord(id: number) {
   const res = await request.delete<unknown, ApiResponse<{ id: number; status: number }>>(`/express/${id}`);
   return res.data;
+}
+
+export async function uploadRecordPhotos(id: number, files: { weighing?: File | null; packing?: File | null }) {
+  const form = new FormData();
+  if (files.weighing) form.append('weighing', files.weighing);
+  if (files.packing) form.append('packing', files.packing);
+  const res = await request.post<unknown, ApiResponse<ExpressRecord>>(`/express/${id}/photos`, form, {
+    timeout: 60000,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  });
+  return res.data;
+}
+
+export async function deleteRecordPhoto(id: number, kind: PhotoKind) {
+  const res = await request.delete<unknown, ApiResponse<ExpressRecord>>(`/express/${id}/photos/${kind}`);
+  return res.data;
+}
+
+export async function fetchRecordPhotoBlob(id: number, kind: PhotoKind) {
+  const response = await request.get<Blob>(`/express/${id}/photos/${kind}`, {
+    responseType: 'blob',
+    timeout: 60000
+  });
+  return response as unknown as Blob;
 }
 
 export async function parseVideo(video: File) {

@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS express_records (
   sync_status TEXT DEFAULT 'synced',
   status INTEGER DEFAULT 1,
   created_by TEXT,
+  platform TEXT DEFAULT '',
+  platform_order_note TEXT DEFAULT '',
+  weighing_photo TEXT,
+  packing_photo TEXT,
   deleted_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -20,12 +24,13 @@ CREATE TABLE IF NOT EXISTS express_records (
 CREATE INDEX IF NOT EXISTS idx_tracking_number ON express_records(tracking_number);
 CREATE INDEX IF NOT EXISTS idx_status_created ON express_records(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_status ON express_records(sync_status);
+CREATE INDEX IF NOT EXISTS idx_platform_order_note ON express_records(platform_order_note);
 
 CREATE TABLE IF NOT EXISTS express_record_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   record_id INTEGER NOT NULL,
   item_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
+  quantity REAL NOT NULL,
   unit TEXT DEFAULT '',
   is_original INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -49,4 +54,3 @@ CREATE TABLE IF NOT EXISTS backup_logs (
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
